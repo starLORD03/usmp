@@ -3,26 +3,16 @@
 # Extended Architecture
 
 ## 1. Multi-Layer Protocol Stack
-
-┌─────────────────────────────────────────────────┐
-│              Application Layer                  │  ← Service implementations
-├─────────────────────────────────────────────────┤
-│            OS Integration Layer                 │  ← Platform-specific handlers
-├─────────────────────────────────────────────────┤
-│           Service Abstraction Layer             │  ← Universal service APIs
-├─────────────────────────────────────────────────┤
-│           Migration Orchestration               │  ← Migration workflow engine
-├─────────────────────────────────────────────────┤
-│          Data Transformation Layer              │  ← Format conversion & mapping
-├─────────────────────────────────────────────────┤
-│           Compatibility Layer                   │  ← Cross-platform adaptation
-├─────────────────────────────────────────────────┤
-│            Security & Auth Layer                │  ← Platform authentication
-├─────────────────────────────────────────────────┤
-│            Transport Layer                      │  ← Secure data transmission
-└─────────────────────────────────────────────────┘
-
-
+```mermaid
+graph TD
+    A[Application Layer] ---|Service implementations| A
+    B[OS Integration Layer] ---|Platform-specific handlers| B
+    C[Service Abstraction Layer] ---|Universal service APIs| C
+    D[Migration Orchestration] ---|Migration workflow engine| D
+    E[Data Transformation Layer] ---|Format conversion & mapping| E
+    F[Compatibility Layer] ---|Cross-platform adaptation| F
+    G[Security & Auth Layer] ---|Platform authentication| G
+    H[Transport Layer] ---|Secure data transmission| H
 
 ## 2. OS-Level Service Categories
 
