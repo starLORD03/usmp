@@ -6,14 +6,22 @@
 
 ```mermaid
 graph TD
-    A[Application Layer] ---|Service implementations| A
-    B[OS Integration Layer] ---|Platform-specific handlers| B
-    C[Service Abstraction Layer] ---|Universal service APIs| C
-    D[Migration Orchestration] ---|Migration workflow engine| D
-    E[Data Transformation Layer] ---|Format conversion & mapping| E
-    F[Compatibility Layer] ---|Cross-platform adaptation| F
-    G[Security & Auth Layer] ---|Platform authentication| G
-    H[Transport Layer] ---|Secure data transmission| H
+    A[Application Layer] --> B[OS Integration Layer]
+    B --> C[Service Abstraction Layer]
+    C --> D[Migration Orchestration]
+    D --> E[Data Transformation Layer]
+    E --> F[Compatibility Layer]
+    F --> G[Security & Auth Layer]
+    G --> H[Transport Layer]
+    
+    A -.->|Service implementations| A1[User Applications]
+    B -.->|Platform-specific handlers| B1[System APIs]
+    C -.->|Universal service APIs| C1[Service Registry]
+    D -.->|Migration workflow engine| D1[Orchestrator]
+    E -.->|Format conversion & mapping| E1[Data Mappers]
+    F -.->|Cross-platform adaptation| F1[Adapters]
+    G -.->|Platform authentication| G1[Auth Providers]
+    H -.->|Secure data transmission| H1[Network Stack]
 
 ## 2. OS-Level Service Categories
 
