@@ -3,6 +3,7 @@
 # Extended Architecture
 
 ## 1. Multi-Layer Protocol Stack
+
 ```mermaid
 graph TD
     A[Application Layer] ---|Service implementations| A
