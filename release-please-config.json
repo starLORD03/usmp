@@ -7,7 +7,14 @@
   "packages": {
     ".": {
       "package-name": "usmp-protocol",
-      "changelog-path": "CHANGELOG.md"
+      "changelog-path": "CHANGELOG.md",
+      "extra-files": [
+        {
+          "type": "toml",
+          "path": "uv.lock",
+          "jsonpath": "$.package[?(@.name.value=='usmp-protocol')].version"
+        }
+      ]
     }
   }
 }
