@@ -107,12 +107,15 @@ class TestWriter:
         self, tmp_path: Path, source_info: ConnectorInfo, capabilities: CapabilityManifest
     ) -> None:
         path = tmp_path / "x.usmp"
-        with (
-            pytest.raises(RuntimeError),
-            BundleWriter(path, source=source_info, capabilities=capabilities) as w,
-        ):
-            w.add_item(make_event("1"))
-            raise RuntimeError("boom")
+
+        def write_then_fail() -> None:
+            with BundleWriter(path, source=source_info, capabilities=capabilities) as w:
+                w.add_item(make_event("1"))
+                raise RuntimeError("boom")
+
+        with pytest.raises(RuntimeError, match="boom"):
+            write_then_fail()
+
         assert not path.exists()
         assert list(tmp_path.iterdir()) == []
 
