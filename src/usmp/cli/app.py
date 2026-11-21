@@ -5,6 +5,7 @@ from typing import Annotated
 import typer
 
 from usmp import __version__
+from usmp.cli import bundle
 
 app = typer.Typer(
     name="usmp",
@@ -12,6 +13,7 @@ app = typer.Typer(
     no_args_is_help=True,
     add_completion=False,
 )
+app.add_typer(bundle.app, name="bundle")
 
 
 def _print_version(value: bool) -> None:
