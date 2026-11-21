@@ -1,0 +1,122 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://starlord03.github.io/usmp/schemas/core/item.schema.json",
+  "$defs": {
+    "JsonValue": {},
+    "SourceRef": {
+      "additionalProperties": false,
+      "description": "Where an item came from.",
+      "properties": {
+        "connector": {
+          "description": "Lower-case identifier: letters, digits and underscores; starts with a letter.",
+          "maxLength": 64,
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "title": "Connector",
+          "type": "string"
+        },
+        "native_id": {
+          "description": "The provider's own identifier.",
+          "minLength": 1,
+          "title": "Native Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "connector",
+        "native_id"
+      ],
+      "title": "SourceRef",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "One record in a domain's canonical model, wrapped in the USMP envelope.",
+  "properties": {
+    "usmp_id": {
+      "description": "Stable item identifier, derived from the connector and native id it was first read from.",
+      "pattern": "^usmp:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+      "title": "Usmp Id",
+      "type": "string"
+    },
+    "domain": {
+      "description": "Domain, e.g. `calendar`.",
+      "maxLength": 64,
+      "pattern": "^[a-z][a-z0-9_]*$",
+      "title": "Domain",
+      "type": "string"
+    },
+    "type": {
+      "description": "Item type within the domain, e.g. `event`.",
+      "maxLength": 64,
+      "pattern": "^[a-z][a-z0-9_]*$",
+      "title": "Type",
+      "type": "string"
+    },
+    "schema_version": {
+      "description": "Major version of the domain schema.",
+      "exclusiveMinimum": 0,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "source": {
+      "$ref": "#/$defs/SourceRef"
+    },
+    "parent": {
+      "anyOf": [
+        {
+          "description": "Stable item identifier, derived from the connector and native id it was first read from.",
+          "pattern": "^usmp:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "`usmp_id` of the containing item, e.g. an event's calendar.",
+      "title": "Parent"
+    },
+    "payload": {
+      "additionalProperties": {
+        "$ref": "#/$defs/JsonValue"
+      },
+      "description": "The item in the domain's canonical schema. Top-level keys are the *fields* used by capability manifests and verification.",
+      "title": "Payload",
+      "type": "object"
+    },
+    "extensions": {
+      "description": "Provider-specific data keyed by connector name. Not hashed or verified.",
+      "patternProperties": {
+        "^[a-z][a-z0-9_]*$": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "type": "object"
+        }
+      },
+      "propertyNames": {
+        "description": "Lower-case identifier: letters, digits and underscores; starts with a letter.",
+        "maxLength": 64
+      },
+      "title": "Extensions",
+      "type": "object"
+    },
+    "content_hash": {
+      "description": "Hash of `domain`, `type`, `schema_version` and `payload`.",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Content Hash",
+      "type": "string"
+    }
+  },
+  "required": [
+    "usmp_id",
+    "domain",
+    "type",
+    "schema_version",
+    "source",
+    "payload",
+    "content_hash"
+  ],
+  "title": "Item",
+  "type": "object"
+}

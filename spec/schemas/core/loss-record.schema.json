@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://starlord03.github.io/usmp/schemas/core/loss-record.schema.json",
+  "$defs": {
+    "LossReason": {
+      "enum": [
+        "unsupported_by_canonical",
+        "unsupported_by_target",
+        "not_readable_by_target",
+        "value_converted"
+      ],
+      "title": "LossReason",
+      "type": "string"
+    },
+    "Severity": {
+      "enum": [
+        "info",
+        "warning",
+        "error"
+      ],
+      "title": "Severity",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "A field of an item that will not arrive (or not arrive unchanged) at the target.",
+  "properties": {
+    "usmp_id": {
+      "description": "Stable item identifier, derived from the connector and native id it was first read from.",
+      "pattern": "^usmp:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+      "title": "Usmp Id",
+      "type": "string"
+    },
+    "field": {
+      "description": "Top-level payload field, or a provider field.",
+      "minLength": 1,
+      "title": "Field",
+      "type": "string"
+    },
+    "reason": {
+      "$ref": "#/$defs/LossReason"
+    },
+    "severity": {
+      "$ref": "#/$defs/Severity",
+      "default": "warning"
+    },
+    "stage": {
+      "enum": [
+        "export",
+        "plan",
+        "import"
+      ],
+      "title": "Stage",
+      "type": "string"
+    },
+    "detail": {
+      "default": "",
+      "title": "Detail",
+      "type": "string"
+    }
+  },
+  "required": [
+    "usmp_id",
+    "field",
+    "reason",
+    "stage"
+  ],
+  "title": "LossRecord",
+  "type": "object"
+}

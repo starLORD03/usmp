@@ -1,0 +1,110 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://starlord03.github.io/usmp/schemas/core/capability-manifest.schema.json",
+  "$defs": {
+    "DomainCapability": {
+      "additionalProperties": false,
+      "properties": {
+        "domain": {
+          "description": "Lower-case identifier: letters, digits and underscores; starts with a letter.",
+          "maxLength": 64,
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "title": "Domain",
+          "type": "string"
+        },
+        "schema_version": {
+          "exclusiveMinimum": 0,
+          "title": "Schema Version",
+          "type": "integer"
+        },
+        "types": {
+          "items": {
+            "$ref": "#/$defs/TypeCapability"
+          },
+          "title": "Types",
+          "type": "array"
+        }
+      },
+      "required": [
+        "domain",
+        "schema_version",
+        "types"
+      ],
+      "title": "DomainCapability",
+      "type": "object"
+    },
+    "TypeCapability": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "description": "Lower-case identifier: letters, digits and underscores; starts with a letter.",
+          "maxLength": 64,
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "title": "Type",
+          "type": "string"
+        },
+        "read_fields": {
+          "description": "Payload fields this connector can read.",
+          "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Read Fields",
+          "type": "array"
+        },
+        "write_fields": {
+          "description": "Payload fields this connector can write.",
+          "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Write Fields",
+          "type": "array"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "TypeCapability",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "What a connector can read and write.",
+  "properties": {
+    "connector": {
+      "description": "Lower-case identifier: letters, digits and underscores; starts with a letter.",
+      "maxLength": 64,
+      "pattern": "^[a-z][a-z0-9_]*$",
+      "title": "Connector",
+      "type": "string"
+    },
+    "display_name": {
+      "minLength": 1,
+      "title": "Display Name",
+      "type": "string"
+    },
+    "version": {
+      "minLength": 1,
+      "title": "Version",
+      "type": "string"
+    },
+    "domains": {
+      "items": {
+        "$ref": "#/$defs/DomainCapability"
+      },
+      "title": "Domains",
+      "type": "array"
+    }
+  },
+  "required": [
+    "connector",
+    "display_name",
+    "version",
+    "domains"
+  ],
+  "title": "CapabilityManifest",
+  "type": "object"
+}

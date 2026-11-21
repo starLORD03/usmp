@@ -1,0 +1,303 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://starlord03.github.io/usmp/schemas/core/verification-report.schema.json",
+  "$defs": {
+    "ConnectorInfo": {
+      "additionalProperties": false,
+      "properties": {
+        "connector": {
+          "description": "Lower-case identifier: letters, digits and underscores; starts with a letter.",
+          "maxLength": 64,
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "title": "Connector",
+          "type": "string"
+        },
+        "display_name": {
+          "title": "Display Name",
+          "type": "string"
+        },
+        "label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Human label for the account or location, e.g. `work calendar`. Must never contain credentials.",
+          "title": "Label"
+        }
+      },
+      "required": [
+        "connector",
+        "display_name"
+      ],
+      "title": "ConnectorInfo",
+      "type": "object"
+    },
+    "ItemResult": {
+      "additionalProperties": false,
+      "properties": {
+        "usmp_id": {
+          "description": "Stable item identifier, derived from the connector and native id it was first read from.",
+          "pattern": "^usmp:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          "title": "Usmp Id",
+          "type": "string"
+        },
+        "type": {
+          "description": "Lower-case identifier: letters, digits and underscores; starts with a letter.",
+          "maxLength": 64,
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "title": "Type",
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/ItemStatus"
+        },
+        "target_native_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Target Native Id"
+        },
+        "compared_fields": {
+          "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Compared Fields",
+          "type": "array"
+        },
+        "mismatched_fields": {
+          "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Mismatched Fields",
+          "type": "array"
+        },
+        "declared_loss_fields": {
+          "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Declared Loss Fields",
+          "type": "array"
+        }
+      },
+      "required": [
+        "usmp_id",
+        "type",
+        "status"
+      ],
+      "title": "ItemResult",
+      "type": "object"
+    },
+    "ItemStatus": {
+      "enum": [
+        "verified",
+        "verified_with_declared_loss",
+        "mismatch",
+        "missing"
+      ],
+      "title": "ItemStatus",
+      "type": "string"
+    },
+    "LossReason": {
+      "enum": [
+        "unsupported_by_canonical",
+        "unsupported_by_target",
+        "not_readable_by_target",
+        "value_converted"
+      ],
+      "title": "LossReason",
+      "type": "string"
+    },
+    "LossRecord": {
+      "additionalProperties": false,
+      "description": "A field of an item that will not arrive (or not arrive unchanged) at the target.",
+      "properties": {
+        "usmp_id": {
+          "description": "Stable item identifier, derived from the connector and native id it was first read from.",
+          "pattern": "^usmp:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          "title": "Usmp Id",
+          "type": "string"
+        },
+        "field": {
+          "description": "Top-level payload field, or a provider field.",
+          "minLength": 1,
+          "title": "Field",
+          "type": "string"
+        },
+        "reason": {
+          "$ref": "#/$defs/LossReason"
+        },
+        "severity": {
+          "$ref": "#/$defs/Severity",
+          "default": "warning"
+        },
+        "stage": {
+          "enum": [
+            "export",
+            "plan",
+            "import"
+          ],
+          "title": "Stage",
+          "type": "string"
+        },
+        "detail": {
+          "default": "",
+          "title": "Detail",
+          "type": "string"
+        }
+      },
+      "required": [
+        "usmp_id",
+        "field",
+        "reason",
+        "stage"
+      ],
+      "title": "LossRecord",
+      "type": "object"
+    },
+    "ReportSummary": {
+      "additionalProperties": false,
+      "properties": {
+        "total": {
+          "minimum": 0,
+          "title": "Total",
+          "type": "integer"
+        },
+        "verified": {
+          "minimum": 0,
+          "title": "Verified",
+          "type": "integer"
+        },
+        "verified_with_declared_loss": {
+          "minimum": 0,
+          "title": "Verified With Declared Loss",
+          "type": "integer"
+        },
+        "mismatch": {
+          "minimum": 0,
+          "title": "Mismatch",
+          "type": "integer"
+        },
+        "missing": {
+          "minimum": 0,
+          "title": "Missing",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "total",
+        "verified",
+        "verified_with_declared_loss",
+        "mismatch",
+        "missing"
+      ],
+      "title": "ReportSummary",
+      "type": "object"
+    },
+    "Severity": {
+      "enum": [
+        "info",
+        "warning",
+        "error"
+      ],
+      "title": "Severity",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "The outcome of a migration: what arrived, what was lost, what failed.",
+  "properties": {
+    "report_version": {
+      "const": 1,
+      "default": 1,
+      "title": "Report Version",
+      "type": "integer"
+    },
+    "run_id": {
+      "minLength": 1,
+      "title": "Run Id",
+      "type": "string"
+    },
+    "started_at": {
+      "format": "date-time",
+      "title": "Started At",
+      "type": "string"
+    },
+    "finished_at": {
+      "format": "date-time",
+      "title": "Finished At",
+      "type": "string"
+    },
+    "domain": {
+      "description": "Lower-case identifier: letters, digits and underscores; starts with a letter.",
+      "maxLength": 64,
+      "pattern": "^[a-z][a-z0-9_]*$",
+      "title": "Domain",
+      "type": "string"
+    },
+    "dry_run": {
+      "title": "Dry Run",
+      "type": "boolean"
+    },
+    "source": {
+      "$ref": "#/$defs/ConnectorInfo"
+    },
+    "target": {
+      "$ref": "#/$defs/ConnectorInfo"
+    },
+    "summary": {
+      "$ref": "#/$defs/ReportSummary"
+    },
+    "items": {
+      "items": {
+        "$ref": "#/$defs/ItemResult"
+      },
+      "title": "Items",
+      "type": "array"
+    },
+    "losses": {
+      "items": {
+        "$ref": "#/$defs/LossRecord"
+      },
+      "title": "Losses",
+      "type": "array"
+    },
+    "ok": {
+      "description": "True when nothing is mismatched or missing.",
+      "readOnly": true,
+      "title": "Ok",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "run_id",
+    "started_at",
+    "finished_at",
+    "domain",
+    "dry_run",
+    "source",
+    "target",
+    "summary",
+    "items",
+    "losses",
+    "ok"
+  ],
+  "title": "VerificationReport",
+  "type": "object"
+}

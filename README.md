@@ -40,6 +40,8 @@ $ usmp migrate --from google --to caldav --dry-run
 
 | Path | Contents |
 |---|---|
+| [`spec/`](spec/usmp-spec.md) | The protocol specification and JSON Schemas |
+| [`src/usmp/`](src/usmp/) | Python reference implementation |
 | [`docs/architecture/`](docs/architecture/) | Architecture overview |
 | [`docs/adr/`](docs/adr/) | Architecture decision records |
 | [`docs/plan/ROADMAP.md`](docs/plan/ROADMAP.md) | Phased roadmap with exit criteria |

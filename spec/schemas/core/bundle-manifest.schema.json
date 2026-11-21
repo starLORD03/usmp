@@ -1,0 +1,265 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://starlord03.github.io/usmp/schemas/core/bundle-manifest.schema.json",
+  "$defs": {
+    "CapabilityManifest": {
+      "additionalProperties": false,
+      "description": "What a connector can read and write.",
+      "properties": {
+        "connector": {
+          "description": "Lower-case identifier: letters, digits and underscores; starts with a letter.",
+          "maxLength": 64,
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "title": "Connector",
+          "type": "string"
+        },
+        "display_name": {
+          "minLength": 1,
+          "title": "Display Name",
+          "type": "string"
+        },
+        "version": {
+          "minLength": 1,
+          "title": "Version",
+          "type": "string"
+        },
+        "domains": {
+          "items": {
+            "$ref": "#/$defs/DomainCapability"
+          },
+          "title": "Domains",
+          "type": "array"
+        }
+      },
+      "required": [
+        "connector",
+        "display_name",
+        "version",
+        "domains"
+      ],
+      "title": "CapabilityManifest",
+      "type": "object"
+    },
+    "ConnectorInfo": {
+      "additionalProperties": false,
+      "properties": {
+        "connector": {
+          "description": "Lower-case identifier: letters, digits and underscores; starts with a letter.",
+          "maxLength": 64,
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "title": "Connector",
+          "type": "string"
+        },
+        "display_name": {
+          "title": "Display Name",
+          "type": "string"
+        },
+        "label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Human label for the account or location, e.g. `work calendar`. Must never contain credentials.",
+          "title": "Label"
+        }
+      },
+      "required": [
+        "connector",
+        "display_name"
+      ],
+      "title": "ConnectorInfo",
+      "type": "object"
+    },
+    "DomainCapability": {
+      "additionalProperties": false,
+      "properties": {
+        "domain": {
+          "description": "Lower-case identifier: letters, digits and underscores; starts with a letter.",
+          "maxLength": 64,
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "title": "Domain",
+          "type": "string"
+        },
+        "schema_version": {
+          "exclusiveMinimum": 0,
+          "title": "Schema Version",
+          "type": "integer"
+        },
+        "types": {
+          "items": {
+            "$ref": "#/$defs/TypeCapability"
+          },
+          "title": "Types",
+          "type": "array"
+        }
+      },
+      "required": [
+        "domain",
+        "schema_version",
+        "types"
+      ],
+      "title": "DomainCapability",
+      "type": "object"
+    },
+    "ToolInfo": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "default": "usmp",
+          "title": "Name",
+          "type": "string"
+        },
+        "version": {
+          "title": "Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "version"
+      ],
+      "title": "ToolInfo",
+      "type": "object"
+    },
+    "TypeCapability": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "description": "Lower-case identifier: letters, digits and underscores; starts with a letter.",
+          "maxLength": 64,
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "title": "Type",
+          "type": "string"
+        },
+        "read_fields": {
+          "description": "Payload fields this connector can read.",
+          "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Read Fields",
+          "type": "array"
+        },
+        "write_fields": {
+          "description": "Payload fields this connector can write.",
+          "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Write Fields",
+          "type": "array"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "TypeCapability",
+      "type": "object"
+    },
+    "TypeCount": {
+      "additionalProperties": false,
+      "properties": {
+        "domain": {
+          "description": "Lower-case identifier: letters, digits and underscores; starts with a letter.",
+          "maxLength": 64,
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "title": "Domain",
+          "type": "string"
+        },
+        "type": {
+          "description": "Lower-case identifier: letters, digits and underscores; starts with a letter.",
+          "maxLength": 64,
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "title": "Type",
+          "type": "string"
+        },
+        "count": {
+          "minimum": 0,
+          "title": "Count",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "domain",
+        "type",
+        "count"
+      ],
+      "title": "TypeCount",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "`manifest.json` at the root of a `.usmp` bundle.",
+  "properties": {
+    "format": {
+      "const": "usmp-bundle",
+      "default": "usmp-bundle",
+      "title": "Format",
+      "type": "string"
+    },
+    "format_version": {
+      "const": 1,
+      "default": 1,
+      "title": "Format Version",
+      "type": "integer"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "tool": {
+      "$ref": "#/$defs/ToolInfo"
+    },
+    "source": {
+      "$ref": "#/$defs/ConnectorInfo"
+    },
+    "capabilities": {
+      "$ref": "#/$defs/CapabilityManifest",
+      "description": "The source connector's capabilities."
+    },
+    "counts": {
+      "items": {
+        "$ref": "#/$defs/TypeCount"
+      },
+      "title": "Counts",
+      "type": "array"
+    },
+    "items_sha256": {
+      "description": "Hash of the exact bytes of `items.jsonl`.",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Items Sha256",
+      "type": "string"
+    },
+    "losses": {
+      "description": "Number of records in `losses.json`.",
+      "minimum": 0,
+      "title": "Losses",
+      "type": "integer"
+    },
+    "raw_entries": {
+      "description": "Number of files under `raw/`.",
+      "minimum": 0,
+      "title": "Raw Entries",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "created_at",
+    "tool",
+    "source",
+    "capabilities",
+    "counts",
+    "items_sha256",
+    "losses",
+    "raw_entries"
+  ],
+  "title": "BundleManifest",
+  "type": "object"
+}
