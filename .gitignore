@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+
+# Tooling caches
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
+# Docs build
+site/
+
+# Code graphs (regenerated locally)
+graphify-out/
+.code-review-graph/
+
+# USMP runtime artefacts — may contain personal data
+*.usmp
+usmp-reports/
+
+# Editors / OS
+.idea/
+.vscode/
+.DS_Store
