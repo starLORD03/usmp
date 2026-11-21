@@ -13,7 +13,7 @@
 | Runtime | Local-first CLI/library; optional self-hosted server later | [0003](../adr/0003-local-first.md) |
 | Core architecture | Canonical model per domain + connectors + `.usmp` bundle + verification | [0004](../adr/0004-canonical-model-and-bundle.md) |
 | First vertical | Calendar (ICS, CalDAV/iCloud/Nextcloud, Google) | [0005](../adr/0005-calendar-first-vertical.md) |
-| Process | Trunk-based, PRs merged by maintainer, conventional commits, ECC workflow | [0006](../adr/0006-development-workflow.md) |
+| Process | Trunk-based, PRs squash-merged on green CI, conventional commits, ECC workflow | [0006](../adr/0006-development-workflow.md) |
 | MVP guarantees | Non-destructive source + verification report | [0004](../adr/0004-canonical-model-and-bundle.md) |
 | First users | End users (CLI wizard) and developers (connector SDK) | — |
 
@@ -96,7 +96,7 @@ Spec 1.0 freeze and a versioning policy; a community connector registry (an inde
 2. **Plan.** `/plan` on a branch named `feat/<stage>-<slug>`.
 3. **Build test-first.** Write tests first, then implement, until green (`/orch-add-feature` for larger features).
 4. **Review.** `/python-review` and `/code-review`, then code-review-graph `impact` to check blast radius, then `/quality-gate`.
-5. **PR.** Conventional-commit title. All CI checks must pass. **The maintainer (starLORD03) reviews and merges** with a squash merge.
+5. **PR.** Conventional-commit title. All CI checks must pass. Squash-merged (by the maintainer or by Claude on the maintainer's behalf) **only when every required check is green**.
 6. **Release.** release-please collects merged `feat:` and `fix:` commits into a release PR. Merging it tags the version and publishes to PyPI and the docs site.
 7. **Graph refresh.** Rebuild graphify / code-review-graph after a merge to keep the architecture map current.
 

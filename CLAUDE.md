@@ -7,7 +7,7 @@
 - ECC is installed as the `ecc@ecc` plugin. Use its commands for the per-stage workflow in AGENTS.md.
 - Git identity for this repo is `starLORD03`. Push with that account's token
   (`GH_TOKEN=$(gh auth token -u starLORD03)`), never another account.
-- Open PRs; never merge them. The maintainer merges.
+- The maintainer has authorised Claude to manage and squash-merge PRs once all required checks pass. GitHub does not allow approving your own PR, so green CI is the gate. Never merge on red, and never weaken branch protection to get a merge through. Ask before merging anything that changes the spec or schemas incompatibly, touches security or credentials handling, or deletes data.
 
 <!-- code-review-graph MCP tools -->
 ## MCP Tools: code-review-graph

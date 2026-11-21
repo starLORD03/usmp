@@ -22,7 +22,7 @@ bundle and ends with a **verification report**.
    import a provider SDK.
 5. **Schemas are the contract.** If a model in `core/` or `domains/` changes, regenerate
    `spec/schemas/` in the same PR. Breaking a published schema needs a new schema version and an ADR.
-6. **Never push to `main`.** Work on a branch and open a PR. The maintainer merges.
+6. **Never push to `main`.** Work on a branch and open a PR. Squash-merge only when every required check is green; never bypass or disable a failing check.
 
 ## Per-stage workflow (ECC)
 

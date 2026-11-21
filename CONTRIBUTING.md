@@ -20,7 +20,7 @@ USMP uses trunk-based development ([ADR 0006](docs/adr/0006-development-workflow
 4. Open a pull request. The **PR title must follow [Conventional Commits](https://www.conventionalcommits.org/)**,
    for example `feat(calendar): add CalDAV reader`, because it becomes the squash-merge commit and
    drives the changelog and version.
-5. All required CI checks must pass. A maintainer reviews and squash-merges.
+5. All required CI checks must pass. The PR is then squash-merged.
 
 | Title prefix | Meaning | Version bump |
 |---|---|---|
