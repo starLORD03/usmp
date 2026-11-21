@@ -29,6 +29,4 @@ jobs:
             build
             revert
           requireScope: false
-          subjectPattern: ^[a-z].+[^.]$
-          subjectPatternError: |
-            The subject "{subject}" should start with a lowercase letter and not end with a period.
+          # Subject case is not enforced, so Dependabot titles ("ci: Bump …") pass.
