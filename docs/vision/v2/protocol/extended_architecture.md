@@ -14,7 +14,7 @@ graph TD
     E --> F[Compatibility Layer]
     F --> G[Security & Auth Layer]
     G --> H[Transport Layer]
-    
+
     A -.->|Service implementations| A1[User Applications]
     B -.->|Platform-specific handlers| B1[System APIs]
     C -.->|Universal service APIs| C1[Service Registry]

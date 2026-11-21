@@ -31,7 +31,26 @@ USMP uses trunk-based development ([ADR 0006](docs/adr/0006-development-workflow
 
 ## Development setup
 
-Instructions arrive with the Python scaffold (Phase 0.2). It will use [uv](https://docs.astral.sh/uv/).
+You need [uv](https://docs.astral.sh/uv/getting-started/installation/). It installs the right
+Python version for you.
+
+```console
+git clone https://github.com/starLORD03/usmp.git && cd usmp
+uv sync                      # create .venv with all dev tools
+uv run pre-commit install    # run checks on every commit
+uv run usmp --version        # try the CLI
+```
+
+| Task | Command |
+|---|---|
+| Run tests with coverage | `uv run pytest --cov` |
+| Lint and auto-fix | `uv run ruff check --fix .` |
+| Format | `uv run ruff format .` |
+| Type-check | `uv run mypy` |
+| Everything CI runs | `uv run pre-commit run --all-files && uv run pytest --cov` |
+
+Supported Python versions are 3.11 to 3.14. Local development uses 3.11 (`.python-version`) so you
+don't accidentally use newer syntax; CI tests every supported version.
 
 ## Architecture decisions
 

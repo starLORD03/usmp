@@ -11,5 +11,5 @@ a domain family in Phase 6 of the [roadmap](../../plan/ROADMAP.md).
 
 | Folder | Contents |
 |---|---|
-| [`protocol/`](protocol/) | Architecture, workflow, API sketch, security, business model, roadmap (v2) |
-| [`schema/`](schema/) | Early schema sketches: application config, service registry, compatibility matrix |
+| [`protocol/`](https://github.com/starLORD03/usmp/tree/main/docs/vision/v2/protocol) | Architecture, workflow, API sketch, security, business model, roadmap (v2) |
+| [`schema/`](https://github.com/starLORD03/usmp/tree/main/docs/vision/v2/schema) | Early schema sketches: application config, service registry, compatibility matrix |

@@ -21,4 +21,3 @@
 * Service discovery mechanisms
 * Security and permission frameworks
 * Integration testing suites
-

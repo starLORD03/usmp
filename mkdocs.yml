@@ -1,0 +1,51 @@
+site_name: USMP — Universal Service Migration Protocol
+site_description: Move your data between services and platforms without losing it.
+site_url: https://starlord03.github.io/usmp/
+repo_url: https://github.com/starLORD03/usmp
+repo_name: starLORD03/usmp
+edit_uri: edit/main/docs/
+strict: true
+
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+    - search.suggest
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      toggle: { icon: material/brightness-7, name: Switch to dark mode }
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      toggle: { icon: material/brightness-4, name: Switch to light mode }
+
+markdown_extensions:
+  - admonition
+  - tables
+  - toc: { permalink: true }
+  - pymdownx.highlight
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+
+nav:
+  - Home: index.md
+  - Architecture: architecture/overview.md
+  - Roadmap: plan/ROADMAP.md
+  - Decisions (ADRs):
+      - adr/0001-open-protocol-first.md
+      - adr/0002-python-reference-implementation.md
+      - adr/0003-local-first.md
+      - adr/0004-canonical-model-and-bundle.md
+      - adr/0005-calendar-first-vertical.md
+      - adr/0006-development-workflow.md
+  - Contributing: https://github.com/starLORD03/usmp/blob/main/CONTRIBUTING.md
+  - v2 vision (archived): vision/v2/README.md
+
+not_in_nav: |
+  /vision/v2/protocol/*
+  /vision/v2/schema/*

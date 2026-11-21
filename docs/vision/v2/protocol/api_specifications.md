@@ -16,7 +16,7 @@ paths:
       responses:
         200:
           description: List of supported operating systems
-          
+
   /usmp/v2/platforms/{platform_id}/services:
     get:
       summary: List services available on a platform
@@ -27,7 +27,7 @@ paths:
           schema:
             type: string
             enum: [windows, macos, linux, android, ios]
-            
+
   /usmp/v2/migrations/os:
     post:
       summary: Start OS-level service migration
@@ -41,14 +41,14 @@ paths:
                 target_platform: {type: string}
                 service_type: {type: string}
                 migration_config: {type: object}
-                
+
   /usmp/v2/migrations/{migration_id}/compatibility:
     get:
       summary: Get compatibility analysis for migration
       responses:
         200:
           description: Detailed compatibility report
-          
+
   /usmp/v2/services/{service_type}/schema:
     get:
       summary: Get universal schema for service type
