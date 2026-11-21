@@ -1,6 +1,6 @@
 # ADR 0003: Local-first runtime
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-11-22
 - Deciders: starLORD03
 

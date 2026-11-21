@@ -1,28 +1,55 @@
-# Universal Service Migration Protocol (USMP) v2.0
+# USMP — Universal Service Migration Protocol
 
-The Universal Service Migration Protocol (USMP) v2.0 is a framework designed to enable the seamless migration of operating system-level applications and services across different platforms. This protocol aims to create a competitive service ecosystem where users can choose the best applications regardless of their operating system, fostering innovation and reducing platform lock-in.
+**Move your data between services and platforms without losing it.**
 
-## Key Features
+USMP is an open, vendor-neutral protocol and a reference implementation for migrating a user's data
+and service configuration from one provider to another: Google Calendar to iCloud, AWS to Azure, one
+car's driver profile to the next. You switch services; your data comes with you, and you get proof
+that nothing was lost.
 
-* **Service-Agnostic Computing**: Users can choose services based on merit, not platform exclusivity.
-* **Granular Payment Models**: A business model that allows users to pay only for the services they use across any platform.
-* **Multi-Layer Protocol Stack**: A robust architecture that handles everything from data transformation to platform security.
-* **Comprehensive Migration Workflow**: A six-phase process for migrating services, including discovery, compatibility assessment, and data import.
+> **Status: early development (Phase 0).** Nothing is usable yet. Follow the
+> [roadmap](docs/plan/ROADMAP.md) and [milestones](https://github.com/starLORD03/usmp/milestones).
+> The first usable release will migrate calendars (Google, iCloud, CalDAV/Nextcloud, `.ics`).
 
-## Documentation Structure
+## How it works
 
-This repository contains a complete breakdown of the USMP v2.0 specification.
+```
+Source ──read only──► canonical data ──► .usmp bundle (backup + hashes) ──► target ──read back──► verification report
+```
 
-* `docs/business_model.md`: Explains the business problem and the USMP solution.
-* `docs/architecture/`: Detailed breakdown of the protocol's technical architecture.
-* `docs/technical_specs/`: Contains universal schemas and API specifications.
-* `docs/workflow/`: Describes the migration process and real-world scenarios.
-* `docs/roadmap.md`: Outlines the planned implementation phases.
+- **Platform-independent core.** Each provider is handled by a small plugin called a *connector*.
+  The engine knows nothing about Google, Apple, AWS or anyone else.
+- **One canonical model per domain** (calendar, contacts, …), published as versioned JSON Schema, so
+  connectors can be written in any language.
+- **Your source is never modified.** Connectors can only read from the source.
+- **Nothing is lost silently.** Fields the target can't hold are listed *before* you migrate.
+  Afterwards, USMP reads everything back and verifies it.
+- **Local-first.** Runs on your machine. Your data and credentials stay with you.
+
+Read the [architecture overview](docs/architecture/overview.md) for details.
+
+## Planned usage (Phase 2)
+
+```console
+$ pipx install usmp-protocol
+$ usmp migrate            # interactive wizard: pick source, target, preview, migrate, verify
+$ usmp migrate --from google --to caldav --dry-run
+```
+
+## Repository layout
+
+| Path | Contents |
+|---|---|
+| [`docs/architecture/`](docs/architecture/) | Architecture overview |
+| [`docs/adr/`](docs/adr/) | Architecture decision records |
+| [`docs/plan/ROADMAP.md`](docs/plan/ROADMAP.md) | Phased roadmap with exit criteria |
+| [`docs/vision/v2/`](docs/vision/v2/) | The original v2.0 design (OS-level app migration, business model) |
 
 ## Contributing
 
-We welcome contributions to the USMP project. Please refer to the contribution guidelines for more information.
+Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md). To report a security issue, see
+[SECURITY.md](SECURITY.md).
 
 ## License
 
-This project is licensed under the MIT License. See the `LICENSE.md` file for details.
+[MIT](LICENSE)

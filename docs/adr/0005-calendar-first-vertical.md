@@ -1,6 +1,6 @@
 # ADR 0005: Calendar as the first vertical
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-11-22
 - Deciders: starLORD03
 

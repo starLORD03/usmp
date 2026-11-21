@@ -1,0 +1,47 @@
+name: Bug report
+description: Something doesn't work as expected
+labels: ["type: bug", "status: triage"]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Include the command you ran and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. usmp migrate --from ... --to ...
+        2. ...
+    validations:
+      required: true
+  - type: dropdown
+    id: data-loss
+    attributes:
+      label: Was any data lost or changed?
+      options:
+        - "No"
+        - "Yes, on the target"
+        - "Yes, on the source"
+        - "Not sure"
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: USMP version
+      placeholder: output of `usmp --version`
+  - type: input
+    id: platform
+    attributes:
+      label: OS and Python version
+      placeholder: e.g. macOS 26, Python 3.13
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or verification report
+      description: Remove any personal data and tokens before pasting.
+      render: text

@@ -1,6 +1,6 @@
 # ADR 0006: Development workflow and CI/CD
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-11-22
 - Deciders: starLORD03
 

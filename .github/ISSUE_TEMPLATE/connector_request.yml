@@ -1,0 +1,47 @@
+name: Connector request
+description: Ask for support for a new provider or platform
+labels: ["type: connector", "status: triage"]
+body:
+  - type: input
+    id: provider
+    attributes:
+      label: Provider or platform
+      placeholder: e.g. Proton Calendar, Microsoft Outlook, Volvo driver profiles
+    validations:
+      required: true
+  - type: dropdown
+    id: domain
+    attributes:
+      label: Domain
+      options:
+        - Calendar
+        - Contacts
+        - Tasks
+        - Desktop app settings
+        - Media / streaming
+        - Vehicle profile
+        - Cloud infrastructure
+        - Other
+    validations:
+      required: true
+  - type: dropdown
+    id: direction
+    attributes:
+      label: Direction needed
+      options:
+        - Read (migrate away from it)
+        - Write (migrate to it)
+        - Both
+    validations:
+      required: true
+  - type: textarea
+    id: api
+    attributes:
+      label: Known APIs, export formats or standards
+      description: e.g. CalDAV, an official REST API, an export file format.
+  - type: checkboxes
+    id: help
+    attributes:
+      label: Contribution
+      options:
+        - label: I'm willing to help build or test this connector

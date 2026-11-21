@@ -1,7 +1,7 @@
 # USMP Architecture Overview (v3 draft)
 
-> Status: **Draft for review** — part of the Phase 0 planning PR.
-> Supersedes the OS-centric v2.0 design in `usmp_protocol_docs/` (to be moved to `docs/vision/v2/`).
+> Status: **Accepted** (ADR 0004). Evolves with the spec.
+> Supersedes the OS-centric v2.0 design, preserved in [`docs/vision/v2/`](../vision/v2/README.md).
 
 ## 1. What USMP is
 

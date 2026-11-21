@@ -1,6 +1,6 @@
 # USMP Development Roadmap (v3)
 
-> Status: **Draft for review** — Phase 0 planning PR.
+> Status: **Accepted**. Progress is tracked in GitHub milestones.
 > Each **phase** = a GitHub milestone and a minor release. Each **stage** = one or more issues and
 > PRs. A phase is done only when its exit criteria pass in CI.
 
