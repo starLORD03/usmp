@@ -1,6 +1,6 @@
 # ADR 0002: Python for the reference implementation
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-11-22
 - Deciders: starLORD03
 

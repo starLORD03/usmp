@@ -1,6 +1,6 @@
 # ADR 0001: Open protocol first
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-11-22
 - Deciders: starLORD03
 

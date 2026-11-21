@@ -1,6 +1,6 @@
 # ADR 0004: Canonical model, connectors, bundle and verification
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-11-22
 - Deciders: starLORD03
 
