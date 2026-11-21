@@ -28,7 +28,7 @@
 | 0.1 Repo restructure | Move v2 docs to `docs/vision/v2/`; new README; CONTRIBUTING, CODE_OF_CONDUCT, SECURITY, CODEOWNERS; issue and PR templates; labels; milestones for Phases 0–7 |
 | 0.2 Python scaffold | `uv` project with `src/` layout, `pyproject.toml` (distribution `usmp-protocol`, import `usmp`, CLI `usmp`), ruff, mypy `--strict`, pytest + coverage, pre-commit; `usmp --version` works |
 | 0.3 CI | GitHub Actions: lint, type-check, test matrix (Ubuntu/macOS/Windows × Python 3.11–3.14), coverage gate, commitlint on PR titles, CodeQL, gitleaks, pip-audit, Dependabot |
-| 0.4 CD | release-please (changelog + version + tag), PyPI trusted publishing (TestPyPI first), MkDocs Material docs site on GitHub Pages |
+| 0.4 CD | release-please (changelog + version + tag), PyPI trusted publishing (TestPyPI first), Zensical docs site (MkDocs-compatible successor to Material for MkDocs) on GitHub Pages |
 | 0.5 Agent tooling | `CLAUDE.md`/`AGENTS.md` with the ECC workflow; graphify and code-review-graph configs; branch protection on `main` (required checks, squash merge) |
 
 **Exit criteria:** a trivial PR goes green on every check; merging a `feat:` commit produces a release PR; docs site is live.
