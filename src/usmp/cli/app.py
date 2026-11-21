@@ -5,7 +5,8 @@ from typing import Annotated
 import typer
 
 from usmp import __version__
-from usmp.cli import bundle
+from usmp.cli import bundle, connectors
+from usmp.sdk import registry
 
 app = typer.Typer(
     name="usmp",
@@ -14,6 +15,7 @@ app = typer.Typer(
     add_completion=False,
 )
 app.add_typer(bundle.app, name="bundle")
+app.add_typer(connectors.app, name="connectors")
 
 
 def _print_version(value: bool) -> None:
@@ -41,8 +43,11 @@ def root(
 @app.command()
 def info() -> None:
     """Show what this installation of USMP can do."""
+    found, broken = registry.discover()
     typer.echo(f"usmp {__version__}")
-    typer.echo("No connectors installed yet. See https://github.com/starLORD03/usmp")
+    typer.echo(f"Connectors: {', '.join(found) or 'none'}")
+    if broken:
+        typer.echo(f"Broken connectors: {', '.join(b.name for b in broken)}")
 
 
 def main() -> None:

@@ -37,14 +37,23 @@
       "additionalProperties": false,
       "properties": {
         "type": {
-          "description": "Lower-case identifier: letters, digits and underscores; starts with a letter.",
-          "maxLength": 64,
-          "pattern": "^[a-z][a-z0-9_]*$",
-          "title": "Type",
-          "type": "string"
+          "anyOf": [
+            {
+              "description": "Lower-case identifier: letters, digits and underscores; starts with a letter.",
+              "maxLength": 64,
+              "pattern": "^[a-z][a-z0-9_]*$",
+              "type": "string"
+            },
+            {
+              "const": "*",
+              "type": "string"
+            }
+          ],
+          "description": "Item type, or `*` for any type.",
+          "title": "Type"
         },
         "read_fields": {
-          "description": "Payload fields this connector can read.",
+          "description": "Payload fields this connector can read; `[\"*\"]` means every field.",
           "items": {
             "maxLength": 128,
             "minLength": 1,
@@ -54,7 +63,7 @@
           "type": "array"
         },
         "write_fields": {
-          "description": "Payload fields this connector can write.",
+          "description": "Payload fields this connector can write; `[\"*\"]` means every field.",
           "items": {
             "maxLength": 128,
             "minLength": 1,

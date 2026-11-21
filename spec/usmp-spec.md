@@ -90,6 +90,10 @@ Each connector publishes, per domain and item type, the fields it can **read** (
 emit payload fields it does not declare in `read_fields`, and MUST NOT silently drop a field it
 declares in `write_fields`.
 
+A connector that stores canonical items verbatim MAY use the wildcard `*`: as a `type` it matches
+any item type in the domain (an exact type entry takes precedence), and a field list of exactly
+`["*"]` means every field. `*` MUST NOT be combined with other names in a field list.
+
 ## 6. Loss records
 
 Schema: [`loss-record.schema.json`](schemas/core/loss-record.schema.json).

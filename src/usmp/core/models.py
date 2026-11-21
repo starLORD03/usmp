@@ -5,7 +5,7 @@ Changing a field here changes the protocol: regenerate the schemas (``python -m 
 and update ``spec/usmp-spec.md`` in the same pull request.
 """
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from enum import StrEnum
 from typing import Annotated, Any, Literal, Self
 
@@ -53,6 +53,18 @@ def _sorted_unique(values: list[str]) -> list[str]:
 
 
 FieldList = Annotated[list[FieldName], AfterValidator(_sorted_unique)]
+
+ANY = "*"
+"""Wildcard in capability manifests: any item type, or any field."""
+
+
+def _wildcard_alone(values: list[str]) -> list[str]:
+    if ANY in values and len(values) > 1:
+        raise ValueError(f"{ANY!r} means every field and must be the only entry")
+    return values
+
+
+CapabilityFieldList = Annotated[FieldList, AfterValidator(_wildcard_alone)]
 
 
 class _Model(BaseModel):
@@ -181,13 +193,23 @@ class LossRecord(_Model):
 
 
 class TypeCapability(_Model):
-    type: Name
-    read_fields: FieldList = Field(
-        default_factory=list, description="Payload fields this connector can read."
+    type: Name | Literal["*"] = Field(description="Item type, or `*` for any type.")
+    read_fields: CapabilityFieldList = Field(
+        default_factory=list,
+        description='Payload fields this connector can read; `["*"]` means every field.',
     )
-    write_fields: FieldList = Field(
-        default_factory=list, description="Payload fields this connector can write."
+    write_fields: CapabilityFieldList = Field(
+        default_factory=list,
+        description='Payload fields this connector can write; `["*"]` means every field.',
     )
+
+    def readable(self, fields: Iterable[str]) -> set[str]:
+        """The subset of ``fields`` this connector can read."""
+        return set(fields) if ANY in self.read_fields else set(fields) & set(self.read_fields)
+
+    def writable(self, fields: Iterable[str]) -> set[str]:
+        """The subset of ``fields`` this connector can write."""
+        return set(fields) if ANY in self.write_fields else set(fields) & set(self.write_fields)
 
 
 class DomainCapability(_Model):
@@ -222,8 +244,12 @@ class CapabilityManifest(_Model):
         return next((d for d in self.domains if d.domain == domain), None)
 
     def type_capability(self, domain: str, type: str) -> TypeCapability | None:
+        """Capability for ``type`` in ``domain``; an exact match wins over a ``*`` entry."""
         cap = self.domain(domain)
-        return next((t for t in cap.types if t.type == type), None) if cap else None
+        if cap is None:
+            return None
+        exact = next((t for t in cap.types if t.type == type), None)
+        return exact or next((t for t in cap.types if t.type == ANY), None)
 
     def can_read(self, domain: str) -> bool:
         cap = self.domain(domain)
@@ -345,6 +371,7 @@ class VerificationReport(_Model):
 
 
 __all__ = [
+    "ANY",
     "BundleManifest",
     "CapabilityManifest",
     "ConnectorInfo",
