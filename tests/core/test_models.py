@@ -201,3 +201,36 @@ def test_loss_record_defaults() -> None:
 
     assert loss.severity == "warning"
     assert loss.model_dump(mode="json")["reason"] == "unsupported_by_target"
+
+
+class TestWildcards:
+    def test_wildcard_type_and_fields(self) -> None:
+        m = CapabilityManifest(
+            connector="jsondir",
+            display_name="JSON directory",
+            version="1",
+            domains=[
+                DomainCapability(
+                    domain="calendar",
+                    schema_version=1,
+                    types=[
+                        TypeCapability(type="*", read_fields=["*"], write_fields=["*"]),
+                        TypeCapability(type="event", read_fields=["title"], write_fields=[]),
+                    ],
+                )
+            ],
+        )
+
+        exact = m.type_capability("calendar", "event")
+        fallback = m.type_capability("calendar", "todo")
+        assert exact is not None
+        assert fallback is not None
+        assert exact.readable({"title", "start"}) == {"title"}
+        assert exact.writable({"title"}) == set()
+        assert fallback.type == "*"
+        assert fallback.readable({"a", "b"}) == {"a", "b"}
+        assert fallback.writable({"a"}) == {"a"}
+
+    def test_wildcard_must_be_alone(self) -> None:
+        with pytest.raises(ValidationError, match="must be the only entry"):
+            TypeCapability(type="event", read_fields=["*", "title"])

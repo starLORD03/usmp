@@ -22,7 +22,7 @@ def test_no_arguments_shows_help() -> None:
     result = runner.invoke(app, [])
 
     assert "Usage" in result.output
-    assert "info" in result.output
+    assert "connectors" in result.output
 
 
 def test_info_reports_version() -> None:

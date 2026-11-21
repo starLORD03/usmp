@@ -36,6 +36,10 @@ Changelog = "https://github.com/starLORD03/usmp/blob/main/CHANGELOG.md"
 [project.scripts]
 usmp = "usmp.cli.app:main"
 
+[project.entry-points."usmp.connectors"]
+jsondir = "usmp.connectors.jsondir:JsonDirConnector"
+memory = "usmp.connectors.memory:MemoryConnector"
+
 [dependency-groups]
 dev = [
     "pytest>=8",
