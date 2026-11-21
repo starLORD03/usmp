@@ -234,3 +234,15 @@ class TestWildcards:
     def test_wildcard_must_be_alone(self) -> None:
         with pytest.raises(ValidationError, match="must be the only entry"):
             TypeCapability(type="event", read_fields=["*", "title"])
+
+
+def test_report_json_round_trips_and_recomputes_ok() -> None:
+    item_id = make_item().usmp_id
+    r = report([ItemResult(usmp_id=item_id, type="event", status=ItemStatus.MISSING)])
+    data = r.model_dump(mode="json")
+    data["ok"] = True  # edited claim
+
+    parsed = VerificationReport.model_validate(data)
+
+    assert parsed == r
+    assert parsed.ok is False

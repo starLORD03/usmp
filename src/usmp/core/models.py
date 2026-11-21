@@ -354,12 +354,25 @@ class VerificationReport(_Model):
     summary: ReportSummary
     items: list[ItemResult]
     losses: list[LossRecord]
+    errors: list[str] = Field(
+        default_factory=list,
+        description="Problems that stopped part of the migration, e.g. a failed write.",
+    )
 
     @computed_field  # type: ignore[prop-decorator]
     @property
     def ok(self) -> bool:
-        """True when nothing is mismatched or missing."""
-        return self.summary.mismatch == 0 and self.summary.missing == 0
+        """True when nothing is mismatched or missing and no errors occurred."""
+        return self.summary.mismatch == 0 and self.summary.missing == 0 and not self.errors
+
+    @model_validator(mode="before")
+    @classmethod
+    def _ignore_serialised_ok(cls, data: Any) -> Any:
+        # `ok` is computed and appears in serialised reports. It is always recomputed from the
+        # contents, so a stale or edited value on input is ignored rather than trusted.
+        if isinstance(data, dict) and "ok" in data:
+            data = {k: v for k, v in data.items() if k != "ok"}
+        return data
 
     @model_validator(mode="after")
     def _summary_matches_items(self) -> Self:

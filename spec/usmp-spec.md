@@ -154,7 +154,8 @@ A migration of one domain from a source to a target proceeds as follows:
 | `missing` | The item could not be read back from the target. |
 
 Schema for the report: [`verification-report.schema.json`](schemas/core/verification-report.schema.json).
-A migration is **ok** only if no item is `mismatch` or `missing`. Tools SHOULD exit with a non-zero
+A migration is **ok** only if no item is `mismatch` or `missing` and the report lists no `errors`
+(problems that stopped part of the migration, such as a failed write). Tools SHOULD exit with a non-zero
 status otherwise.
 
 ## 9. Versioning
