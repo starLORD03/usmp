@@ -606,7 +606,12 @@ def sign_in(client_secrets: str, *, write: bool, open_browser: bool = True) -> t
         scopes=[WRITE_SCOPE if write else READ_SCOPE],
         autogenerate_code_verifier=True,
     )
-    creds = flow.run_local_server(port=0, open_browser=open_browser)
+    creds = flow.run_local_server(
+        port=0,
+        open_browser=open_browser,
+        authorization_prompt_message="Sign in here: {url}",
+        success_message="Signed in to USMP. You can close this window.",
+    )
     session = transport.AuthorizedSession(creds)
     primary = _Api(session, read_only=True).call("GET", "/calendars/primary")
     return str(primary["id"]), str(creds.to_json())

@@ -54,12 +54,23 @@ def google(
     write: Annotated[
         bool, typer.Option("--write", help="Also allow writing (needed to migrate into Google).")
     ] = False,
+    no_browser: Annotated[
+        bool,
+        typer.Option(
+            "--no-browser",
+            help="Print the sign-in link instead of opening a browser (use any private window).",
+        ),
+    ] = False,
 ) -> None:
     """Sign in to Google Calendar in your browser and keep the token in the keychain."""
     from usmp.connectors import gcal
 
     try:
-        account, token = gcal.sign_in(str(client_secrets), write=write)
+        if no_browser:
+            console.print(
+                "Open the link below in any browser (a private window works) and approve."
+            )
+        account, token = gcal.sign_in(str(client_secrets), write=write, open_browser=not no_browser)
         credentials.set_secret(gcal.NAME, gcal.token_account(account, write), token)
     except (KeyringError, ConnectorError) as exc:
         console.print(f"[red]✗ {exc}[/red]")
