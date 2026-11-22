@@ -86,7 +86,7 @@ def test_ics_to_ics_end_to_end(tmp_path: Path) -> None:
     assert "Nothing found at" in result.output
     assert "Migration verified" in result.output
     assert f"usmp migrate --from 'ics:path={FIXTURES / 'google.ics'}'" in result.output
-    assert (out / "Personal.ics").exists()
+    assert len(list(out.glob("*.ics"))) == 1
 
 
 def test_declining_at_the_preview_writes_nothing(tmp_path: Path) -> None:
