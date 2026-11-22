@@ -14,7 +14,7 @@ STATUS_LABELS = {
 }
 
 REASON_LABELS = {
-    "unsupported_by_canonical": "the canonical model cannot hold it",
+    "unsupported_by_canonical": "USMP has no place for it yet (kept in the backup)",
     "unsupported_by_target": "the target cannot store it",
     "not_readable_by_target": "stored, but the target cannot read it back to verify",
     "value_converted": "kept, but converted",

@@ -7,9 +7,9 @@ and service configuration from one provider to another: Google Calendar to iClou
 car's driver profile to the next. You switch services; your data comes with you, and you get proof
 that nothing was lost.
 
-> **Status: early development (Phase 0).** Nothing is usable yet. Follow the
-> [roadmap](docs/plan/ROADMAP.md) and [milestones](https://github.com/starLORD03/usmp/milestones).
-> The first usable release will migrate calendars (Google, iCloud, CalDAV/Nextcloud, `.ics`).
+> **Status: beta for calendars (Phase 2).** Google Calendar, iCloud, Nextcloud, Fastmail, other
+> CalDAV servers and `.ics` files work today. Follow the [roadmap](docs/plan/ROADMAP.md) and
+> [milestones](https://github.com/starLORD03/usmp/milestones).
 
 ## How it works
 
@@ -28,13 +28,32 @@ Source ──read only──► canonical data ──► .usmp bundle (backup + 
 
 Read the [architecture overview](docs/architecture/overview.md) for details.
 
-## Planned usage (Phase 2)
+## Quick start
 
 ```console
-$ pipx install usmp-protocol
-$ usmp migrate            # interactive wizard: pick source, target, preview, migrate, verify
-$ usmp migrate --from google --to caldav --dry-run
+$ pipx install 'usmp-protocol[google]'    # drop [google] if you don't use Google Calendar
+$ usmp migrate
 ```
+
+`usmp migrate` with no options walks you through it:
+
+1. **Where is your calendar now?** Google, iCloud, Nextcloud, Fastmail, another CalDAV server or a
+   `.ics` file. It asks for the account and signs you in (passwords go to your system keychain).
+2. **Where should it go?** The same choices.
+3. **Preview.** You see how many calendars and events will move and anything that can't be
+   carried over, before anything is written. A backup of the source is saved first.
+4. **Migrate and verify.** Everything is read back from the target and checked. You get a report.
+
+At the end it prints the equivalent command, so you can repeat or script it:
+
+```console
+$ usmp migrate --from google:account=you@gmail.com \
+    --to caldav:url=https://caldav.icloud.com,username=you@icloud.com --dry-run
+```
+
+Meeting links (Google Meet, Zoom, Teams), rooms, reminders, recurring events with exceptions and
+time zones all carry over. See the guides for [Google](docs/guides/google.md) and
+[CalDAV](docs/guides/caldav.md).
 
 ## Repository layout
 

@@ -9,6 +9,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from usmp.cli import wizard
 from usmp.core.engine import MigrationError, Preview, migrate
 from usmp.core.models import ItemStatus, VerificationReport
 from usmp.core.report import REASON_LABELS, STATUS_LABELS, summarize_losses, write_reports
@@ -42,7 +43,8 @@ def _show_preview(preview: Preview) -> None:
     console.print(f"\n[bold]Migration preview: {preview.domain}[/bold]")
     console.print(f"  From:  {src}")
     console.print(f"  To:    {dst}")
-    console.print(f"  Backup of the source: {preview.bundle_path}")
+    console.print("  Backup of the source:")
+    console.print(f"  {preview.bundle_path}", soft_wrap=True, markup=False, highlight=False)
     counts = Table("Type", "Items", box=None, padding=(0, 2))
     for type_, count in sorted(preview.counts.items()):
         counts.add_row(type_, str(count))
@@ -84,16 +86,25 @@ def _show_report(report: VerificationReport, paths: list[Path]) -> None:
     console.print(table)
     for error in report.errors:
         console.print(f"  [red]• {error}[/red]")
-    console.print("  Reports: " + ", ".join(str(p) for p in paths))
+    html = next((p for p in paths if p.suffix == ".html"), paths[0])
+    others = ", ".join(p.suffix.lstrip(".").upper() for p in paths if p != html)
+    console.print("  Full report (open in a browser):")
+    console.print(f"  {html}", soft_wrap=True, markup=False, highlight=False)
+    if others:
+        console.print(f"  [dim]Also saved as {others} next to it.[/dim]")
 
 
 def command(
     source: Annotated[
-        str, typer.Option("--from", "-f", help="Source connector, e.g. jsondir:path=./old")
-    ],
+        str | None,
+        typer.Option(
+            "--from", "-f", help="Source connector, e.g. ics:path=old.ics. Omit both to be guided."
+        ),
+    ] = None,
     target: Annotated[
-        str, typer.Option("--to", "-t", help="Target connector, e.g. jsondir:path=./new")
-    ],
+        str | None,
+        typer.Option("--to", "-t", help="Target connector, e.g. caldav:url=…,username=…"),
+    ] = None,
     domain: Annotated[
         str | None,
         typer.Option(help="Domain to migrate, e.g. calendar. Optional if the source has one."),
@@ -113,10 +124,38 @@ def command(
 ) -> None:
     """Migrate data from a source to a target, then verify that it arrived intact.
 
-    The source is only ever read. A backup bundle of everything exported is saved first.
+    Run it without --from and --to to be guided step by step. The source is only ever read. A
+    backup bundle of everything exported is saved first.
     """
+    repeat: str | None = None
+    if source is None and target is None:
+        if not _interactive():
+            console.print(
+                "[red]✗ Say what to migrate with --from and --to, or run `usmp migrate` in a "
+                "terminal to be guided.[/red]"
+            )
+            raise typer.Exit(EXIT_ERROR)
+        try:
+            chosen_source, chosen_target = wizard.run()
+        except typer.Abort:
+            console.print("\nCancelled: nothing was written.")
+            raise typer.Exit(EXIT_CANCELLED) from None
+        except ConnectorError as exc:
+            console.print(f"[red]✗ {exc}[/red]")
+            raise typer.Exit(EXIT_ERROR) from exc
+        source, target = chosen_source.spec, chosen_target.spec
+        domain = domain or "calendar"
+        repeat = wizard.command_line(chosen_source, chosen_target)
+        endpoints = (chosen_source, chosen_target)
+    elif source is None or target is None:
+        missing = "--from" if source is None else "--to"
+        console.print(f"[red]✗ Missing {missing}. Give both --from and --to, or neither.[/red]")
+        raise typer.Exit(EXIT_ERROR)
     try:
-        src, dst = _connector(source, domain), _connector(target, domain)
+        if repeat is not None:
+            src, dst = (registry.get(e.name)(e.config) for e in endpoints)
+        else:
+            src, dst = _connector(source, domain), _connector(target, domain)
         stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
         bundle_path = bundle or Path(f"usmp-{domain or 'export'}-{stamp}.usmp")
 
@@ -140,7 +179,11 @@ def command(
         )
     except (ConnectorError, MigrationError) as exc:
         console.print(f"[red]✗ {exc}[/red]")
+        console.print("  Nothing was written to the target.")
         raise typer.Exit(EXIT_ERROR) from exc
+    except typer.Abort:
+        console.print("\nCancelled: nothing was written to the target.")
+        raise typer.Exit(EXIT_CANCELLED) from None
 
     if dry_run:
         _show_preview(result.preview)
@@ -151,4 +194,7 @@ def command(
         raise typer.Exit(EXIT_CANCELLED)
     paths = write_reports(result.report, report_dir)
     _show_report(result.report, paths)
+    if repeat is not None:
+        console.print("\n  To run the same migration again without questions:")
+        console.print(f"  {repeat}", soft_wrap=True, markup=False, highlight=False)
     raise typer.Exit(EXIT_OK if result.report.ok else EXIT_NOT_VERIFIED)
