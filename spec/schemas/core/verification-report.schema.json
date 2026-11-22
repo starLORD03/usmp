@@ -278,8 +278,16 @@
       "title": "Losses",
       "type": "array"
     },
+    "errors": {
+      "description": "Problems that stopped part of the migration, e.g. a failed write.",
+      "items": {
+        "type": "string"
+      },
+      "title": "Errors",
+      "type": "array"
+    },
     "ok": {
-      "description": "True when nothing is mismatched or missing.",
+      "description": "True when nothing is mismatched or missing and no errors occurred.",
       "readOnly": true,
       "title": "Ok",
       "type": "boolean"
