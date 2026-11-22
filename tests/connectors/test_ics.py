@@ -89,11 +89,13 @@ class TestReadingRealWorldExports:
 
 def ics(tmp_path: Path, body: str, name: str = "x.ics") -> Path:
     path = tmp_path / name
-    path.write_text(
+    # Bytes, not text: on Windows write_text would turn \r\n into \r\r\n.
+    text = (
         "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:t\r\n"
         + body.strip().replace("\n", "\r\n")
         + "\r\nEND:VCALENDAR\r\n"
     )
+    path.write_bytes(text.encode())
     return path
 
 
