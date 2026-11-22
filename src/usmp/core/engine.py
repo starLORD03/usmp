@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
+from usmp import domains
 from usmp.core.bundle import BundleWriter
 from usmp.core.hashing import canonical_json
 from usmp.core.models import (
@@ -164,6 +165,12 @@ def _export(source: Connector, domain: str, bundle: BundleWriter) -> _Exported:
                 raise MigrationError(
                     f"{source.display_name} returned undeclared fields {sorted(undeclared)} on "
                     f"{item.type!r} items; its capability manifest is wrong"
+                )
+            issues = domains.validate(item)
+            if issues:
+                raise MigrationError(
+                    f"{source.display_name} returned an invalid {item.domain} {item.type!r} item "
+                    f"({item.source.native_id}): {'; '.join(issues[:3])}"
                 )
             bundle.add_item(item)
             for loss in record.losses:

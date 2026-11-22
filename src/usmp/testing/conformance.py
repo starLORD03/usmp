@@ -21,6 +21,7 @@ import re
 from collections.abc import Callable, Sequence
 from typing import Any, ClassVar
 
+from usmp import domains
 from usmp.core.hashing import canonical_json
 from usmp.core.models import CapabilityManifest, Item
 from usmp.sdk.connector import Connector, ExportRecord, Reader, Writer
@@ -96,6 +97,9 @@ def check_read(
         undeclared = set(item.payload) - cap.readable(item.payload)
         if undeclared:
             raise _fail(connector, f"returned undeclared fields {sorted(undeclared)}")
+        issues = domains.validate(item)
+        if issues:
+            raise _fail(connector, f"returned an invalid {item.type!r} item: {issues[0]}")
         if item.parent in all_ids and item.parent not in seen:
             raise _fail(connector, f"{item.usmp_id} came before its parent {item.parent}")
         if record.raw_name is not None and not _RAW_NAME.fullmatch(record.raw_name):
@@ -129,6 +133,9 @@ def check_round_trip(connector: Connector, items: Sequence[Item], domain: str) -
         if cap is None:
             raise _fail(connector, f"wrote {item.type!r} items, which it does not declare")
         stored = back[native_id]
+        issues = domains.validate(stored)
+        if issues:
+            raise _fail(connector, f"read_back() returned an invalid item: {issues[0]}")
         for name in sorted(cap.writable(item.payload) & cap.readable(item.payload)):
             if name not in stored.payload or canonical_json(stored.payload[name]) != canonical_json(
                 item.payload[name]

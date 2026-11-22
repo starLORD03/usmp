@@ -38,7 +38,7 @@ def test_clean_migration_is_verified(tmp_path: Path) -> None:
     assert result.report is not None
     assert result.report.ok
     assert result.report.summary.verified == 3
-    assert result.report.domain == "calendar"
+    assert result.report.domain == "demo"
     assert all(r.compared_fields == ["location", "start", "title"] for r in result.report.items)
     assert len(target.items) == 3
 
@@ -49,7 +49,7 @@ def test_source_is_only_read(tmp_path: Path) -> None:
 
     run(source, MemoryConnector(capabilities=make_capabilities()), tmp_path)
 
-    assert source.calls == ["open_reader", "read:calendar"]
+    assert source.calls == ["open_reader", "read:demo"]
     assert source.items == before
 
 
@@ -94,7 +94,7 @@ def test_unsupported_type_is_blocked_and_missing(tmp_path: Path) -> None:
     todo = Item.create(
         connector="memory",
         native_id="t1",
-        domain="calendar",
+        domain="demo",
         type="todo",
         schema_version=1,
         payload={"title": "Buy milk"},
@@ -106,7 +106,7 @@ def test_unsupported_type_is_blocked_and_missing(tmp_path: Path) -> None:
             version="1",
             domains=[
                 DomainCapability(
-                    domain="calendar",
+                    domain="demo",
                     schema_version=1,
                     types=[
                         TypeCapability(type="event", read_fields=["title"]),
@@ -270,16 +270,16 @@ def test_declined_confirmation_writes_nothing(tmp_path: Path) -> None:
 
 class TestPlanChecks:
     def test_source_cannot_read(self, tmp_path: Path) -> None:
-        with pytest.raises(MigrationError, match="cannot read 'calendar'"):
+        with pytest.raises(MigrationError, match="cannot read 'demo'"):
             run(
                 source_with(read=[]),
                 MemoryConnector(capabilities=make_capabilities()),
                 tmp_path,
-                domain="calendar",
+                domain="demo",
             )
 
     def test_target_cannot_write(self, tmp_path: Path) -> None:
-        with pytest.raises(MigrationError, match="cannot write 'calendar'"):
+        with pytest.raises(MigrationError, match="cannot write 'demo'"):
             run(source_with(), MemoryConnector(capabilities=make_capabilities(write=[])), tmp_path)
 
     def test_schema_version_mismatch(self, tmp_path: Path) -> None:
@@ -289,7 +289,7 @@ class TestPlanChecks:
             version="1",
             domains=[
                 DomainCapability(
-                    domain="calendar",
+                    domain="demo",
                     schema_version=2,
                     types=[
                         TypeCapability(type="event", read_fields=["title"], write_fields=["title"])
@@ -351,10 +351,10 @@ def test_choose_domain() -> None:
             DomainCapability(
                 domain=d, schema_version=1, types=[TypeCapability(type="x", read_fields=["a"])]
             )
-            for d in ("calendar", "contacts")
+            for d in ("demo", "contacts")
         ],
     )
-    assert choose_domain(make_capabilities(), None) == "calendar"
+    assert choose_domain(make_capabilities(), None) == "demo"
     assert choose_domain(two, "contacts") == "contacts"
     with pytest.raises(MigrationError, match="several domains"):
         choose_domain(two, None)

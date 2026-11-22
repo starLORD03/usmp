@@ -62,8 +62,8 @@ def test_unknown_connector_suggests_close_match() -> None:
         ("memory", ("memory", {})),
         ("jsondir:path=./out", ("jsondir", {"path": "./out"})),
         (
-            " jsondir : path = a , domain=calendar ,",
-            ("jsondir", {"path": "a", "domain": "calendar"}),
+            " jsondir : path = a , domain=demo ,",
+            ("jsondir", {"path": "a", "domain": "demo"}),
         ),
         ("x:key=a=b", ("x", {"key": "a=b"})),
     ],
@@ -79,7 +79,7 @@ def test_parse_spec_errors(spec: str) -> None:
 
 
 def test_create_merges_extra_config() -> None:
-    c = registry.create("jsondir:path=a", {"domain": "calendar"})
+    c = registry.create("jsondir:path=a", {"domain": "demo"})
 
     assert isinstance(c, JsonDirConnector)
-    assert c.config == {"path": "a", "domain": "calendar"}
+    assert c.config == {"path": "a", "domain": "demo"}

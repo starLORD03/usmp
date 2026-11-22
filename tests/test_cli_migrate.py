@@ -18,8 +18,8 @@ def source_dir(tmp_path: Path) -> Path:
     cal = Item.create(
         connector="seed",
         native_id="cal",
-        domain="calendar",
-        type="calendar",
+        domain="demo",
+        type="demo",
         schema_version=1,
         payload={"name": "Work"},
     )
@@ -27,7 +27,7 @@ def source_dir(tmp_path: Path) -> Path:
         Item.create(
             connector="seed",
             native_id=f"e{n}",
-            domain="calendar",
+            domain="demo",
             type="event",
             schema_version=1,
             parent=cal.usmp_id,
@@ -35,7 +35,7 @@ def source_dir(tmp_path: Path) -> Path:
         )
         for n in range(3)
     ]
-    writer = JsonDirConnector({"path": str(path), "domain": "calendar"}).open_writer()
+    writer = JsonDirConnector({"path": str(path), "domain": "demo"}).open_writer()
     list(writer.write([cal, *events]))
     return path
 
@@ -50,7 +50,7 @@ def invoke(tmp_path: Path, source_dir: Path, *extra: str):  # type: ignore[no-un
             "--to",
             f"jsondir:path={tmp_path / 'new'}",
             "--domain",
-            "calendar",
+            "demo",
             "--bundle",
             str(tmp_path / "backup.usmp"),
             "--report-dir",
@@ -103,7 +103,7 @@ def test_interactive_confirmation(
             "--to",
             f"jsondir:path={tmp_path / 'new'}",
             "--domain",
-            "calendar",
+            "demo",
             "--bundle",
             str(tmp_path / "b.usmp"),
         ],
@@ -136,7 +136,7 @@ def test_preview_explains_losses_and_blocked_items(
     todo = Item.create(
         connector="memory",
         native_id="t",
-        domain="calendar",
+        domain="demo",
         type="todo",
         schema_version=1,
         payload={"title": "x"},
@@ -170,15 +170,15 @@ def test_preview_explains_losses_and_blocked_items(
         (
             [
                 "--from",
-                "jsondir:path=/does/not/exist,domain=calendar",
+                "jsondir:path=/does/not/exist,domain=demo",
                 "--to",
-                "memory:domain=calendar",
+                "memory:domain=demo",
             ],
             "is not a directory",
         ),
         (
-            ["--from", "memory:domain=calendar", "--to", "memory:domain=contacts"],
-            "cannot write 'calendar'",
+            ["--from", "memory:domain=demo", "--to", "memory:domain=contacts"],
+            "cannot write 'demo'",
         ),
     ],
 )

@@ -22,7 +22,7 @@ def make_item(**payload: object) -> Item:
     return Item.create(
         connector="memory",
         native_id="evt-1",
-        domain="calendar",
+        domain="demo",
         type="event",
         schema_version=1,
         payload=payload or {"title": "Standup", "start": "2026-01-05T09:00:00Z"},
@@ -54,7 +54,7 @@ class TestItem:
         b = Item.create(
             connector="other",
             native_id="x",
-            domain="calendar",
+            domain="demo",
             type="event",
             schema_version=1,
             payload=a.payload,
@@ -99,7 +99,7 @@ def manifest() -> CapabilityManifest:
         version="1",
         domains=[
             DomainCapability(
-                domain="calendar",
+                domain="demo",
                 schema_version=1,
                 types=[
                     TypeCapability(
@@ -113,7 +113,7 @@ def manifest() -> CapabilityManifest:
 
 class TestCapabilityManifest:
     def test_field_lists_are_sorted_and_deduplicated(self) -> None:
-        cap = manifest().type_capability("calendar", "event")
+        cap = manifest().type_capability("demo", "event")
 
         assert cap is not None
         assert cap.read_fields == ["start", "title"]
@@ -121,22 +121,22 @@ class TestCapabilityManifest:
     def test_queries(self) -> None:
         m = manifest()
 
-        assert m.can_read("calendar")
-        assert not m.can_write("calendar")
+        assert m.can_read("demo")
+        assert not m.can_write("demo")
         assert not m.can_read("contacts")
-        assert m.type_capability("calendar", "todo") is None
+        assert m.type_capability("demo", "todo") is None
         assert m.type_capability("contacts", "event") is None
 
     def test_duplicate_types_rejected(self) -> None:
         with pytest.raises(ValidationError, match="duplicate types"):
             DomainCapability(
-                domain="calendar",
+                domain="demo",
                 schema_version=1,
                 types=[TypeCapability(type="event"), TypeCapability(type="event")],
             )
 
     def test_duplicate_domains_rejected(self) -> None:
-        d = DomainCapability(domain="calendar", schema_version=1, types=[])
+        d = DomainCapability(domain="demo", schema_version=1, types=[])
         with pytest.raises(ValidationError, match="duplicate domains"):
             CapabilityManifest(connector="m", display_name="M", version="1", domains=[d, d])
 
@@ -147,7 +147,7 @@ def report(results: list[ItemResult], **overrides: object) -> VerificationReport
         "run_id": "run-1",
         "started_at": now,
         "finished_at": now + timedelta(seconds=1),
-        "domain": "calendar",
+        "domain": "demo",
         "dry_run": False,
         "source": ConnectorInfo(connector="memory", display_name="Memory"),
         "target": ConnectorInfo(connector="memory", display_name="Memory"),
@@ -211,7 +211,7 @@ class TestWildcards:
             version="1",
             domains=[
                 DomainCapability(
-                    domain="calendar",
+                    domain="demo",
                     schema_version=1,
                     types=[
                         TypeCapability(type="*", read_fields=["*"], write_fields=["*"]),
@@ -221,8 +221,8 @@ class TestWildcards:
             ],
         )
 
-        exact = m.type_capability("calendar", "event")
-        fallback = m.type_capability("calendar", "todo")
+        exact = m.type_capability("demo", "event")
+        fallback = m.type_capability("demo", "todo")
         assert exact is not None
         assert fallback is not None
         assert exact.readable({"title", "start"}) == {"title"}

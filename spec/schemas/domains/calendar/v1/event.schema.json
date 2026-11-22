@@ -1,0 +1,394 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://starlord03.github.io/usmp/schemas/domains/calendar/v1/event.schema.json",
+  "$defs": {
+    "Alarm": {
+      "additionalProperties": false,
+      "properties": {
+        "trigger": {
+          "description": "Offset from the start, e.g. `-PT15M`.",
+          "title": "Trigger",
+          "type": "string"
+        },
+        "action": {
+          "default": "display",
+          "enum": [
+            "display",
+            "email",
+            "audio"
+          ],
+          "title": "Action",
+          "type": "string"
+        }
+      },
+      "required": [
+        "trigger"
+      ],
+      "title": "Alarm",
+      "type": "object"
+    },
+    "Attachment": {
+      "additionalProperties": false,
+      "properties": {
+        "uri": {
+          "description": "Where the file lives. Files are not copied.",
+          "minLength": 1,
+          "title": "Uri",
+          "type": "string"
+        },
+        "media_type": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Media Type"
+        },
+        "title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Title"
+        }
+      },
+      "required": [
+        "uri"
+      ],
+      "title": "Attachment",
+      "type": "object"
+    },
+    "Attendee": {
+      "additionalProperties": false,
+      "properties": {
+        "email": {
+          "title": "Email",
+          "type": "string"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Name"
+        },
+        "role": {
+          "default": "required",
+          "enum": [
+            "chair",
+            "required",
+            "optional",
+            "non_participant"
+          ],
+          "title": "Role",
+          "type": "string"
+        },
+        "status": {
+          "default": "needs_action",
+          "enum": [
+            "needs_action",
+            "accepted",
+            "declined",
+            "tentative",
+            "delegated"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "email"
+      ],
+      "title": "Attendee",
+      "type": "object"
+    },
+    "Person": {
+      "additionalProperties": false,
+      "properties": {
+        "email": {
+          "title": "Email",
+          "type": "string"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Name"
+        }
+      },
+      "required": [
+        "email"
+      ],
+      "title": "Person",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "One event, or one overridden occurrence of a recurring event.",
+  "properties": {
+    "uid": {
+      "description": "iCalendar UID, shared by all occurrences.",
+      "minLength": 1,
+      "title": "Uid",
+      "type": "string"
+    },
+    "title": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Title"
+    },
+    "description": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Description"
+    },
+    "location": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Location"
+    },
+    "url": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Url"
+    },
+    "start": {
+      "description": "`YYYY-MM-DD` (all day) or `YYYY-MM-DDTHH:MM:SS` (local to time_zone).",
+      "title": "Start",
+      "type": "string"
+    },
+    "end": {
+      "anyOf": [
+        {
+          "description": "`YYYY-MM-DD` (all day) or `YYYY-MM-DDTHH:MM:SS` (local to time_zone).",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Exclusive end, same form as `start`.",
+      "title": "End"
+    },
+    "time_zone": {
+      "anyOf": [
+        {
+          "description": "IANA time zone name.",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Zone of `start` (and `end`, unless `end_time_zone` is set). Absent for all-day events and for floating times.",
+      "title": "Time Zone"
+    },
+    "end_time_zone": {
+      "anyOf": [
+        {
+          "description": "IANA time zone name.",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "End Time Zone"
+    },
+    "status": {
+      "anyOf": [
+        {
+          "enum": [
+            "confirmed",
+            "tentative",
+            "cancelled"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Status"
+    },
+    "availability": {
+      "anyOf": [
+        {
+          "enum": [
+            "busy",
+            "free"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Availability"
+    },
+    "privacy": {
+      "anyOf": [
+        {
+          "enum": [
+            "public",
+            "private",
+            "confidential"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Privacy"
+    },
+    "recurrence_rules": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Recurrence Rules",
+      "type": "array"
+    },
+    "recurrence_dates": {
+      "items": {
+        "description": "`YYYY-MM-DD` (all day) or `YYYY-MM-DDTHH:MM:SS` (local to time_zone).",
+        "type": "string"
+      },
+      "title": "Recurrence Dates",
+      "type": "array"
+    },
+    "excluded_dates": {
+      "items": {
+        "description": "`YYYY-MM-DD` (all day) or `YYYY-MM-DDTHH:MM:SS` (local to time_zone).",
+        "type": "string"
+      },
+      "title": "Excluded Dates",
+      "type": "array"
+    },
+    "recurrence_id": {
+      "anyOf": [
+        {
+          "description": "`YYYY-MM-DD` (all day) or `YYYY-MM-DDTHH:MM:SS` (local to time_zone).",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Set on an overridden occurrence: the original start it replaces.",
+      "title": "Recurrence Id"
+    },
+    "organizer": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Person"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "attendees": {
+      "items": {
+        "$ref": "#/$defs/Attendee"
+      },
+      "title": "Attendees",
+      "type": "array"
+    },
+    "alarms": {
+      "items": {
+        "$ref": "#/$defs/Alarm"
+      },
+      "title": "Alarms",
+      "type": "array"
+    },
+    "categories": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Categories",
+      "type": "array"
+    },
+    "attachments": {
+      "items": {
+        "$ref": "#/$defs/Attachment"
+      },
+      "title": "Attachments",
+      "type": "array"
+    },
+    "color": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Color"
+    }
+  },
+  "required": [
+    "uid",
+    "start"
+  ],
+  "title": "Event",
+  "type": "object"
+}

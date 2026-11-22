@@ -50,7 +50,7 @@ def test_key_order_does_not_change_hash(payload: dict[str, int]) -> None:
 
 
 def test_hash_covers_domain_type_and_version() -> None:
-    base = {"domain": "calendar", "type": "event", "schema_version": 1, "payload": {"a": 1}}
+    base = {"domain": "demo", "type": "event", "schema_version": 1, "payload": {"a": 1}}
     hashes = {
         content_hash(**base),  # type: ignore[arg-type]
         content_hash(**{**base, "domain": "contacts"}),  # type: ignore[arg-type]

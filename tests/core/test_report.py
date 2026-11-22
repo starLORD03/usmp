@@ -9,7 +9,7 @@ from usmp.core.report import summarize_losses, to_html, to_markdown, write_repor
 
 def lossy_report(tmp_path: Path) -> VerificationReport:
     source = MemoryConnector(
-        {"label": "Old <calendar>"},
+        {"label": "Old <demo>"},
         capabilities=make_capabilities(),
         items=[make_event(str(n), title="T", start="S", location="L") for n in range(2)],
     )
@@ -30,8 +30,8 @@ def test_markdown_summarizes_and_lists_losses(tmp_path: Path) -> None:
 def test_html_escapes_user_content(tmp_path: Path) -> None:
     out = to_html(lossy_report(tmp_path))
 
-    assert "Old &lt;calendar&gt;" in out
-    assert "<calendar>" not in out
+    assert "Old &lt;demo&gt;" in out
+    assert "<demo>" not in out
     assert out.startswith("<!doctype html>")
 
 

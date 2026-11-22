@@ -50,7 +50,7 @@ class TestRoundTrip:
             assert [i.usmp_id for i in items] == sorted(i.usmp_id for i in items)
             assert r.manifest.source == source_info
             assert [(c.domain, c.type, c.count) for c in r.manifest.counts] == [
-                ("calendar", "event", 5)
+                ("demo", "event", 5)
             ]
             assert len(r.losses()) == 1
             assert r.raw_names == ["event-0.ics"]
