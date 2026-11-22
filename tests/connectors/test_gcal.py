@@ -378,7 +378,8 @@ def test_google_details_survive_a_trip_through_ics(google: FakeGoogle, tmp_path:
     )
     assert out.report is not None and out.report.ok, out.report
     assert out.report.summary.verified_with_declared_loss == 0, out.report
-    text = (tmp_path / "ics" / "Me.ics").read_text()
+    [ics_file] = (tmp_path / "ics").glob("*.ics")
+    text = ics_file.read_text()
     assert "CONFERENCE;FEATURE=VIDEO" in text
     assert "Join online: https://meet.google.com/abc-defg-hij" in text, "visible in any app"
 
