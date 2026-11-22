@@ -161,7 +161,8 @@ class TestReadOnlyCheck:
             def read(self, domain: str) -> Iterator[ExportRecord]:
                 yield from ()
 
-            def delete_event(self, native_id: str) -> None: ...
+            def delete_event(self, native_id: str) -> None:
+                """A mutating method a source reader must never offer."""
 
         with pytest.raises(ConformanceError, match="mutating methods: delete_event"):
             check_reader_is_read_only(broken(reader=Sneaky()))
