@@ -298,3 +298,27 @@ def test_errors_are_explained(exc: Exception, message: str) -> None:
 def test_connector_errors_pass_through() -> None:
     with pytest.raises(ConnectorError, match=r"^original$"), _errors("testing"):
         raise ConnectorError("original")
+
+
+def test_merge_mode_leaves_existing_calendar_settings_alone(radicale: tuple[str, Path]) -> None:
+    url, _ = radicale
+    user = new_user()
+    list(
+        connector(url, user)
+        .open_writer()
+        .write(
+            [calendar_item("s", "a", {"name": "Home", "color": "#111111", "description": "Mine"})]
+        )
+    )
+
+    [result] = list(
+        connector(url, user, calendar="Home")
+        .open_writer()
+        .write(
+            [calendar_item("s", "b", {"name": "Work", "color": "#222222", "description": "Theirs"})]
+        )
+    )
+
+    [home] = [r.item.payload for r in connector(url, user).open_reader().read("calendar")]
+    assert home == {"name": "Home", "color": "#111111", "description": "Mine"}
+    assert {loss.field for loss in result.losses} == {"name", "color", "description"}
