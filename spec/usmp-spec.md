@@ -145,7 +145,8 @@ A migration of one domain from a source to a target proceeds as follows:
 5. **Import.** Write items to the target. The writer reports the target's native id for each item.
 6. **Read back** the written items from the target.
 7. **Verify.** For each item, the **comparable fields** are those present in the source payload
-   that the target can both write and read. Compare projected hashes over the comparable fields.
+   that the target can both write and read, minus any field the target reported as changed or
+   lost when writing that item. Compare projected hashes over the comparable fields.
 
 | Status | Condition |
 |---|---|

@@ -192,6 +192,7 @@ def _verify(
     target: CapabilityManifest,
     lost_fields: set[str],
     native_id: str | None,
+    changed_by_target: frozenset[str] = frozenset(),
 ) -> ItemResult:
     def result(status: ItemStatus, **fields: list[str]) -> ItemResult:
         return ItemResult(
@@ -206,7 +207,7 @@ def _verify(
     cap = target.type_capability(item.domain, item.type)
     if back is None or cap is None:
         return result(ItemStatus.MISSING)
-    comparable = cap.writable(item.payload) & cap.readable(item.payload)
+    comparable = cap.writable(item.payload) & cap.readable(item.payload) - changed_by_target
     compared = sorted(comparable)
     if item.projected_hash(comparable) == back.projected_hash(comparable):
         status = ItemStatus.VERIFIED_WITH_DECLARED_LOSS if lost_fields else ItemStatus.VERIFIED
@@ -289,12 +290,24 @@ def migrate(
     for loss in all_losses:
         lost_by_item[loss.usmp_id].add(loss.field)
 
+    # Fields the target itself reported as changed on import are declared losses, not mismatches.
+    changed_by_target: dict[str, set[str]] = defaultdict(set)
+    for loss in import_losses:
+        changed_by_target[loss.usmp_id].add(loss.field)
+
     results = []
     for item in exported.items:
         native_id = native_ids.get(item.usmp_id)
         back = back_by_native.get(native_id) if native_id else None
         results.append(
-            _verify(item, back, target_caps, lost_by_item.get(item.usmp_id, set()), native_id)
+            _verify(
+                item,
+                back,
+                target_caps,
+                lost_by_item.get(item.usmp_id, set()),
+                native_id,
+                frozenset(changed_by_target.get(item.usmp_id, set())),
+            )
         )
 
     report = VerificationReport(
