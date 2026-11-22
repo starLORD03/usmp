@@ -10,7 +10,7 @@ from usmp.cli.app import app
 from usmp.connectors.ics import IcsConnector
 from usmp.core.bundle import BundleReader
 from usmp.core.engine import migrate
-from usmp.core.models import Item, LossReason
+from usmp.core.models import Item, ItemStatus, LossReason
 from usmp.domains.calendar import calendar_item, canonicalize, event_item
 from usmp.sdk.connector import ConnectorError, ExportRecord
 from usmp.testing import ConnectorConformance
@@ -511,3 +511,45 @@ def test_cli_ics_to_jsondir(tmp_path: Path) -> None:
 
     assert result.exit_code == 0, result.output
     assert "Migration verified" in result.output
+
+
+def _backslash_item(name: str) -> Item:
+    return event_item(
+        "seed",
+        "1",
+        {
+            "uid": "b@x",
+            "start": "2026-01-01",
+            "organizer": {"email": "o@x.com", "name": name},
+            "attendees": [{"email": "a@x.com", "name": name}],
+            "attachments": [{"uri": "https://f/x", "title": name}],
+        },
+    )
+
+
+@pytest.mark.parametrize("name", ["\\", "a\\", "Ünïcödé \\ b"])
+def test_names_ending_in_backslash_round_trip(tmp_path: Path, name: str) -> None:
+    # icalendar corrupts a parameter that ends in a backslash; found by the property test above.
+    item = _backslash_item(name)
+    writer = IcsConnector({"path": str(tmp_path / "c.ics")}).open_writer()
+    [result] = list(writer.write([item]))
+    [back] = list(writer.read_back("calendar", [result.native_id]))
+
+    assert back.payload == item.payload
+    assert result.losses == ()
+
+
+def test_text_icalendar_cannot_store_is_declared_not_mismatched(tmp_path: Path) -> None:
+    from usmp.connectors.memory import MemoryConnector
+
+    item = _backslash_item("two \\\\ backslashes")  # icalendar collapses "\\\\" in parameters
+    result = migrate(
+        MemoryConnector({"domain": "calendar"}, items=[item]),
+        IcsConnector({"path": str(tmp_path / "out")}),
+        bundle_path=tmp_path / "b.usmp",
+    )
+
+    assert result.report is not None and result.report.ok, result.report
+    [verdict] = result.report.items
+    assert verdict.status is ItemStatus.VERIFIED_WITH_DECLARED_LOSS
+    assert {"organizer", "attendees", "attachments"} <= set(verdict.declared_loss_fields)

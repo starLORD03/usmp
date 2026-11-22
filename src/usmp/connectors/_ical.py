@@ -286,6 +286,15 @@ def raw_name(native_id: str) -> str:
     return hashlib.sha256(native_id.encode()).hexdigest()[:32] + ".ics"
 
 
+def _param(value: str) -> str:
+    """Parameter text that survives icalendar's parser.
+
+    A value ending in a backslash makes icalendar treat the following ``:`` as escaped and
+    corrupts the line. A trailing space forces quoting; canonical form trims it again on read.
+    """
+    return f"{value} " if value.endswith("\\") else value
+
+
 def to_ical_time(value: str, zone: str | None) -> date | datetime:
     if "T" not in value:
         return date.fromisoformat(value)
@@ -322,12 +331,12 @@ def vevent(payload: Mapping[str, Any]) -> icalendar.Event:
     if "organizer" in payload:
         org = icalendar.vCalAddress("mailto:" + payload["organizer"]["email"])
         if payload["organizer"].get("name"):
-            org.params["CN"] = payload["organizer"]["name"]
+            org.params["CN"] = _param(payload["organizer"]["name"])
         ev.add("organizer", org)
     for att in payload.get("attendees", []):
         addr = icalendar.vCalAddress("mailto:" + att["email"])
         if att.get("name"):
-            addr.params["CN"] = att["name"]
+            addr.params["CN"] = _param(att["name"])
         addr.params["ROLE"] = ROLE_OUT[att.get("role", "required")]
         addr.params["PARTSTAT"] = att.get("status", "needs_action").upper().replace("_", "-")
         ev.add("attendee", addr)
@@ -343,9 +352,9 @@ def vevent(payload: Mapping[str, Any]) -> icalendar.Event:
     for att in payload.get("attachments", []):
         params = {}
         if att.get("media_type"):
-            params["FMTTYPE"] = att["media_type"]
+            params["FMTTYPE"] = _param(att["media_type"])
         if att.get("title"):
-            params["FILENAME"] = att["title"]
+            params["FILENAME"] = _param(att["title"])
         ev.add("attach", att["uri"], parameters=params)
     if "color" in payload:
         ev.add("color", payload["color"])
@@ -438,3 +447,17 @@ def parse_vcalendar(data: bytes | str, where: str) -> Any:
         return icalendar.Calendar.from_ical(data)
     except ValueError as exc:
         raise ConnectorError(f"cannot read {where}: {exc}") from exc
+
+
+def unstorable_fields(payload: Mapping[str, Any]) -> list[str]:
+    """Fields of ``payload`` that would not survive being written as iCalendar and read back.
+
+    Writers report these as declared losses instead of letting verification find a mismatch.
+    """
+    vcal = parse_vcalendar(build_vcalendar([payload]), "round-trip check")
+    back = event_payload(vcal.walk("VEVENT")[0], Converter("check"))
+    try:
+        back = Event.model_validate(back).model_dump(mode="json", exclude_defaults=True)
+    except ValidationError:
+        return sorted(payload)
+    return sorted(k for k in payload if back.get(k) != payload[k])

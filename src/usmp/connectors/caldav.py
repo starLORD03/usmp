@@ -31,6 +31,7 @@ from usmp.connectors._ical import (
     event_records,
     parse_vcalendar,
     recurrence_key,
+    unstorable_fields,
     vevent,
 )
 from usmp.core.models import CapabilityManifest, Item, LossReason, LossRecord, Severity
@@ -181,7 +182,15 @@ class _CalDavWriter(Writer):
                 cal, name = self._make(existing, str(item.payload["name"]))
             if name != item.payload["name"]:
                 losses.append(self._loss(item, "name", f"stored as {name!r}"))
-            losses += self._apply_properties(cal, item)
+            if merged is not None:
+                # Merging never changes the existing calendar's own settings.
+                losses += [
+                    self._loss(item, key, f"merged into the existing calendar {name!r}")
+                    for key in ("description", "color", "time_zone")
+                    if key in item.payload
+                ]
+            else:
+                losses += self._apply_properties(cal, item)
             by_source[item.usmp_id] = cal
             results[item.usmp_id] = WriteResult(item.usmp_id, str(cal.url), tuple(losses))
 
@@ -213,8 +222,18 @@ class _CalDavWriter(Writer):
                     if "recurrence_id" in item.payload
                     else None
                 )
+                event_losses = tuple(
+                    LossRecord(
+                        usmp_id=item.usmp_id,
+                        field=f,
+                        reason=LossReason.VALUE_CONVERTED,
+                        stage="import",
+                        detail="iCalendar cannot store this text exactly",
+                    )
+                    for f in unstorable_fields(item.payload)
+                )
                 results[item.usmp_id] = WriteResult(
-                    item.usmp_id, _event_native_id(str(saved.url))(uid, rid)
+                    item.usmp_id, _event_native_id(str(saved.url))(uid, rid), event_losses
                 )
 
         for item in items:

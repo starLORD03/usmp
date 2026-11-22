@@ -26,6 +26,7 @@ from usmp.connectors._ical import (
     parse_vcalendar,
     recurrence_key,
     resolve_zone,
+    unstorable_fields,
     vevent,
 )
 from usmp.core.models import (
@@ -188,7 +189,12 @@ class _IcsWriter(Writer):
                 raise ConnectorError(f"event {item.payload['uid']} appears more than once")
             native_ids.add(native_id)
             pending.events.append(item.payload)
-            yield WriteResult(usmp_id=item.usmp_id, native_id=native_id)
+            losses = tuple(
+                LossRecord(usmp_id=item.usmp_id, field=f, reason=LossReason.VALUE_CONVERTED,
+                           stage="import", detail="iCalendar cannot store this text exactly")
+                for f in unstorable_fields(item.payload)
+            )  # fmt: skip
+            yield WriteResult(usmp_id=item.usmp_id, native_id=native_id, losses=losses)
         if not self._single:
             self._path.mkdir(parents=True, exist_ok=True)
         for pending in files.values():
