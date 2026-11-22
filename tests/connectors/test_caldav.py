@@ -31,37 +31,39 @@ def _free_port() -> int:
 
 @pytest.fixture(scope="module")
 def radicale(tmp_path_factory: pytest.TempPathFactory) -> Iterator[tuple[str, Path]]:
-    store = tmp_path_factory.mktemp("radicale") / "store"
+    base = tmp_path_factory.mktemp("radicale")
+    store, log = base / "store", base / "radicale.log"
     port = _free_port()
-    proc = subprocess.Popen(  # noqa: S603 - fixed argv
-        [
-            sys.executable,
-            "-m",
-            "radicale",
-            "--storage-filesystem-folder",
-            str(store),
-            "--auth-type",
-            "none",
-            "--rights-type",
-            "authenticated",
-            "--server-hosts",
-            f"127.0.0.1:{port}",
-            "--logging-level",
-            "warning",
-        ],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-    deadline = time.monotonic() + 20
+    with log.open("wb") as log_file:
+        proc = subprocess.Popen(  # noqa: S603 - fixed argv
+            [
+                sys.executable,
+                "-m",
+                "radicale",
+                "--storage-filesystem-folder",
+                str(store),
+                "--auth-type",
+                "none",
+                "--rights-type",
+                "authenticated",
+                "--server-hosts",
+                f"127.0.0.1:{port}",
+                "--logging-level",
+                "info",
+            ],
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+        )
+    deadline = time.monotonic() + 60
     while True:
         try:
-            socket.create_connection(("127.0.0.1", port), timeout=0.5).close()
+            socket.create_connection(("127.0.0.1", port), timeout=1).close()
             break
         except OSError:
             if time.monotonic() > deadline or proc.poll() is not None:
                 proc.kill()
-                pytest.fail("Radicale did not start")
-            time.sleep(0.1)
+                pytest.fail(f"Radicale did not start:\n{log.read_text(errors='replace')[-3000:]}")
+            time.sleep(0.2)
     yield f"http://127.0.0.1:{port}/", store
     proc.terminate()
     proc.wait(timeout=10)
