@@ -153,6 +153,16 @@ class TestEdgeCases:
         ev = next(iter(events(split).values()))
         assert (ev["time_zone"], ev["end_time_zone"]) == ("America/New_York", "Europe/London")
 
+    def test_end_in_utc_keeps_its_own_zone(self, tmp_path: Path) -> None:
+        records = read(
+            ics(
+                tmp_path,
+                vevent("DTSTART;TZID=Asia/Tokyo:20260105T200000", "DTEND:20260105T180000Z"),
+            )
+        )
+        [ev] = events(records).values()
+        assert (ev["end"], ev["end_time_zone"]) == ("2026-01-05T18:00:00", "UTC")
+
     def test_zero_length_events(self, tmp_path: Path) -> None:
         timed = read(
             ics(tmp_path, vevent("DTSTART:20260105T090000Z", "DTEND:20260105T090000Z"), "a.ics")

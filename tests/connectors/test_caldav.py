@@ -1,10 +1,5 @@
 import hashlib
-import socket
-import subprocess
-import sys
-import time
 import uuid
-from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -21,52 +16,6 @@ from usmp.testing import ConnectorConformance
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "ics"
 PASSWORD_ENV = "USMP_TEST_CALDAV_PASSWORD"  # noqa: S105 - a variable name
-
-
-def _free_port() -> int:
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return int(s.getsockname()[1])
-
-
-@pytest.fixture(scope="module")
-def radicale(tmp_path_factory: pytest.TempPathFactory) -> Iterator[tuple[str, Path]]:
-    base = tmp_path_factory.mktemp("radicale")
-    store, log = base / "store", base / "radicale.log"
-    port = _free_port()
-    with log.open("wb") as log_file:
-        proc = subprocess.Popen(  # noqa: S603 - fixed argv
-            [
-                sys.executable,
-                "-m",
-                "radicale",
-                "--storage-filesystem-folder",
-                str(store),
-                "--auth-type",
-                "none",
-                "--rights-type",
-                "authenticated",
-                "--server-hosts",
-                f"127.0.0.1:{port}",
-                "--logging-level",
-                "info",
-            ],
-            stdout=log_file,
-            stderr=subprocess.STDOUT,
-        )
-    deadline = time.monotonic() + 60
-    while True:
-        try:
-            socket.create_connection(("127.0.0.1", port), timeout=1).close()
-            break
-        except OSError:
-            if time.monotonic() > deadline or proc.poll() is not None:
-                proc.kill()
-                pytest.fail(f"Radicale did not start:\n{log.read_text(errors='replace')[-3000:]}")
-            time.sleep(0.2)
-    yield f"http://127.0.0.1:{port}/", store
-    proc.terminate()
-    proc.wait(timeout=10)
 
 
 @pytest.fixture(autouse=True)
@@ -199,6 +148,30 @@ def test_name_collision_creates_unique_calendar_with_declared_loss(
     assert cal.status is ItemStatus.VERIFIED_WITH_DECLARED_LOSS
     assert "name" in cal.declared_loss_fields
     assert any(loss.detail == "stored as 'Work (2)'" for loss in result.report.losses)
+
+
+def test_new_calendar_saves_never_replace(radicale: tuple[str, Path]) -> None:
+    url, _ = radicale
+    writer: Any = connector(url, new_user()).open_writer()
+    cal, _ = writer._make({}, "Fresh")
+    lines = [
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        "PRODID:x",
+        "BEGIN:VEVENT",
+        "UID:same@x",
+        "DTSTAMP:20260101T000000Z",
+        "DTSTART:20260101T090000Z",
+        "END:VEVENT",
+        "END:VCALENDAR",
+    ]
+    data = "\r\n".join(lines) + "\r\n"  # fmt: skip
+
+    writer._save(cal, "same@x", data)
+    with pytest.raises(ConnectorError, match="already exists"):
+        writer._save(cal, "same@x", data)
+    with pytest.raises(ConnectorError, match="refused"):
+        writer._save(cal, "other@x", "not iCalendar")
 
 
 def test_merge_into_one_named_calendar_and_no_overwrite(

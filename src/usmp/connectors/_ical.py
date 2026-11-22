@@ -235,6 +235,9 @@ def event_payload(ev: Any, conv: Converter) -> dict[str, Any]:
         end_prop = ev["DTEND"]
         end_tzid = end_prop.params.get("TZID")
         end_zone = resolve_zone(end_tzid) if end_tzid else None
+        end_dt = end_prop.dt
+        if end_zone is None and isinstance(end_dt, datetime) and end_dt.tzinfo is not None:
+            end_zone = "UTC" if end_dt.utcoffset() == timedelta(0) else None  # a "Z" time
         if end_zone and zone and end_zone != zone:
             payload["end"] = local_time(end_prop.dt)
             payload["end_time_zone"] = end_zone
@@ -562,9 +565,12 @@ def event_records(
 
 
 def build_vcalendar(
-    events: Iterable[Mapping[str, Any]], properties: Mapping[str, str] | None = None
+    events: Iterable[Mapping[str, Any]],
+    properties: Mapping[str, str] | None = None,
+    *,
+    timezones: bool = True,
 ) -> bytes:
-    """A complete VCALENDAR document with the given events and their time zones."""
+    """A complete VCALENDAR document with the given events and (by default) their time zones."""
     cal = icalendar.Calendar()
     cal.add("prodid", "-//USMP//usmp-protocol//EN")
     cal.add("version", "2.0")
@@ -572,7 +578,8 @@ def build_vcalendar(
         cal.add(name, value)
     for payload in events:
         cal.add_component(vevent(payload))
-    cal.add_missing_timezones()
+    if timezones:
+        cal.add_missing_timezones()
     return bytes(cal.to_ical())
 
 
@@ -588,7 +595,7 @@ def unstorable_fields(payload: Mapping[str, Any]) -> list[str]:
 
     Writers report these as declared losses instead of letting verification find a mismatch.
     """
-    vcal = parse_vcalendar(build_vcalendar([payload]), "round-trip check")
+    vcal = parse_vcalendar(build_vcalendar([payload], timezones=False), "round-trip check")
     back = event_payload(vcal.walk("VEVENT")[0], Converter("check"))
     try:
         back = Event.model_validate(back).model_dump(mode="json", exclude_defaults=True)

@@ -54,7 +54,8 @@ CI tests the connector against a Radicale server on every change. Before a relea
 this against real accounts (use test calendars, never your only copy):
 
 - [ ] **iCloud → .ics:** `usmp migrate --from caldav:…icloud… --to ics:path=out/` is verified.
-- [ ] **.ics → iCloud:** the 1,000-event test calendar migrates with 0 mismatch and 0 missing.
+- [ ] **.ics → iCloud:** the 1,000-event test calendar (`python -m usmp.testing.synthetic test-calendar.ics`)
+      migrates with 0 mismatch and 0 missing.
 - [ ] Recurring events with a moved occurrence and an exception show correctly in Apple Calendar.
 - [ ] All-day events stay on the right day in a zone different from yours.
 - [ ] Re-running into the same calendar reports "already exists" instead of duplicating.

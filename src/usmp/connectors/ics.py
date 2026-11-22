@@ -191,7 +191,7 @@ class _IcsWriter(Writer):
             pending.events.append(item.payload)
             losses = tuple(
                 LossRecord(usmp_id=item.usmp_id, field=f, reason=LossReason.VALUE_CONVERTED,
-                           stage="import", detail="iCalendar cannot store this text exactly")
+                           stage="import", detail="iCalendar cannot store this value exactly")
                 for f in unstorable_fields(item.payload)
             )  # fmt: skip
             yield WriteResult(usmp_id=item.usmp_id, native_id=native_id, losses=losses)

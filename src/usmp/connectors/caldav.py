@@ -14,15 +14,16 @@ that could change data. As a target, it creates new calendars (or uses the one n
 """
 
 import contextlib
+import hashlib
 from collections import defaultdict
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from typing import Any, ClassVar
 from urllib.parse import unquote, urlparse
 
-from caldav.calendarobjectresource import Event as DavEvent
 from caldav.davclient import DAVClient
 from caldav.elements import cdav, dav, ical
 from caldav.lib import error as caldav_error
+from caldav.lib.url import URL
 
 from usmp.connectors._ical import (
     HEX_COLOR,
@@ -48,6 +49,7 @@ from usmp.sdk.connector import (
 
 NAME = "caldav"
 _SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS", "PROPFIND", "REPORT"})
+_MULTIGET_BATCH = 100  # events fetched per calendar-multiget request
 
 
 @contextlib.contextmanager
@@ -144,6 +146,7 @@ class _CalDavWriter(Writer):
     def __init__(self, client: DAVClient, only: str | None) -> None:
         self._client: Any = client  # the caldav library is only partly typed
         self._only = only
+        self._fresh: set[str] = set()  # calendars created by this writer
 
     def _target_calendars(self) -> dict[str, Any]:
         with _errors("listing calendars"):
@@ -157,7 +160,29 @@ class _CalDavWriter(Writer):
         with _errors(f"creating calendar {unique!r}"):
             cal = self._client.principal().make_calendar(name=unique)
         existing[unique] = cal
+        self._fresh.add(str(cal.url))
         return cal, unique
+
+    def _save(self, cal: Any, uid: str, data: str) -> str:
+        """Store a new resource and return its URL, never replacing an existing event."""
+        if str(cal.url) not in self._fresh:
+            # An existing calendar: let the library look for the UID first.
+            try:
+                return str(cal.save_event(data, no_overwrite=True).url)
+            except caldav_error.ConsistencyError as exc:
+                raise ConnectorError(
+                    f"event {uid} already exists in the target calendar; not overwriting it"
+                ) from exc
+        # A calendar created in this run: one request per event. If-None-Match makes the
+        # server refuse to replace anything (RFC 4791 section 5.3.2).
+        url = str(cal.url.join(hashlib.sha256(uid.encode()).hexdigest()[:32] + ".ics"))
+        headers = {"Content-Type": 'text/calendar; charset="utf-8"', "If-None-Match": "*"}
+        response = self._client.put(url, data, headers)
+        if response.status == 412:
+            raise ConnectorError(f"event {uid} already exists in the target calendar")
+        if response.status >= 400:
+            raise ConnectorError(f"the server refused event {uid} (HTTP {response.status})")
+        return url
 
     def write(self, items: Iterable[Item]) -> Iterator[WriteResult]:
         items = list(items)
@@ -210,12 +235,7 @@ class _CalDavWriter(Writer):
         for (cal_url, uid), group in groups.items():
             data = build_vcalendar([i.payload for i in group]).decode()
             with _errors(f"saving event {uid}"):
-                try:
-                    saved = calendars[cal_url].save_event(data, no_overwrite=True)
-                except caldav_error.ConsistencyError as exc:
-                    raise ConnectorError(
-                        f"event {uid} already exists in the target calendar; not overwriting it"
-                    ) from exc
+                saved_url = self._save(calendars[cal_url], uid, data)
             for item in group:
                 rid = (
                     recurrence_key(vevent(item.payload))
@@ -228,12 +248,12 @@ class _CalDavWriter(Writer):
                         field=f,
                         reason=LossReason.VALUE_CONVERTED,
                         stage="import",
-                        detail="iCalendar cannot store this text exactly",
+                        detail="iCalendar cannot store this value exactly",
                     )
                     for f in unstorable_fields(item.payload)
                 )
                 results[item.usmp_id] = WriteResult(
-                    item.usmp_id, _event_native_id(str(saved.url))(uid, rid), event_losses
+                    item.usmp_id, _event_native_id(saved_url)(uid, rid), event_losses
                 )
 
         for item in items:
@@ -274,7 +294,7 @@ class _CalDavWriter(Writer):
 
     def read_back(self, domain: str, native_ids: Sequence[str]) -> Iterator[Item]:
         wanted = set(native_ids)
-        resources: dict[str, None] = {}
+        by_calendar: dict[str, dict[str, None]] = defaultdict(dict)
         for native_id in native_ids:
             url = native_id.split("#", 1)[0]
             if url.endswith("/"):
@@ -282,18 +302,21 @@ class _CalDavWriter(Writer):
                     cal = self._client.calendar(url=url)
                     yield calendar_item(NAME, url, _calendar_payload(cal))
             else:
-                resources[url] = None
-        for url in resources:
-            parent_url = url.rsplit("/", 1)[0] + "/"
-            with _errors("reading an event back"):
-                obj = DavEvent(self._client, url=url)
-                obj.load()
-                parent = calendar_item(
-                    NAME, parent_url, _calendar_payload(self._client.calendar(url=parent_url))
-                )
-            for record in _records_for_resource(obj, parent.usmp_id):
-                if record.item.source.native_id in wanted:
-                    yield record.item
+                by_calendar[url.rsplit("/", 1)[0] + "/"][url] = None
+        for cal_url, urls in by_calendar.items():
+            with _errors("reading events back"):
+                cal = self._client.calendar(url=cal_url)
+                parent = calendar_item(NAME, cal_url, _calendar_payload(cal))
+            resources = list(urls)
+            for start in range(0, len(resources), _MULTIGET_BATCH):
+                with _errors("reading events back"):
+                    # Resources the server no longer has are skipped: they count as missing.
+                    batch = resources[start : start + _MULTIGET_BATCH]
+                    objects = cal.multiget([URL.objectify(u) for u in batch])
+                for obj in objects:
+                    for record in _records_for_resource(obj, parent.usmp_id):
+                        if record.item.source.native_id in wanted:
+                            yield record.item
 
     def close(self) -> None:
         self._client.close()

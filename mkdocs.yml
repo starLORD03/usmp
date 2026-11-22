@@ -37,6 +37,7 @@ nav:
   - Architecture: architecture/overview.md
   - Specification: https://github.com/starLORD03/usmp/blob/main/spec/usmp-spec.md
   - Guides:
+      - guides/step-by-step.md
       - guides/caldav.md
       - guides/google.md
       - guides/writing-a-connector.md
