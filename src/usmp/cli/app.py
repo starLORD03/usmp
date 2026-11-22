@@ -5,7 +5,7 @@ from typing import Annotated
 import typer
 
 from usmp import __version__
-from usmp.cli import bundle, connectors, migrate
+from usmp.cli import auth, bundle, connectors, migrate
 from usmp.sdk import registry
 
 app = typer.Typer(
@@ -14,6 +14,7 @@ app = typer.Typer(
     no_args_is_help=True,
     add_completion=False,
 )
+app.add_typer(auth.app, name="auth")
 app.add_typer(bundle.app, name="bundle")
 app.add_typer(connectors.app, name="connectors")
 app.command("migrate")(migrate.command)
