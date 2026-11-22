@@ -22,6 +22,10 @@ site/
 graphify-out/
 .code-review-graph/
 
+# Secrets: never commit OAuth client files or tokens
+client_secret*.json
+*.token.json
+
 # USMP runtime artefacts — may contain personal data
 *.usmp
 usmp-reports/

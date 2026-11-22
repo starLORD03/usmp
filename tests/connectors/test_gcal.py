@@ -442,25 +442,33 @@ class TestSignIn:
         secrets = tmp_path / "client.json"
         secrets.write_text("{}")
         stored: dict[str, str] = {}
-        monkeypatch.setattr(gcal, "sign_in", lambda path, write: ("me@gmail.com", "TOKEN"))
+        calls: list[bool] = []
+
+        def fake_sign_in(path: str, write: bool, open_browser: bool) -> tuple[str, str]:
+            calls.append(open_browser)
+            return "me@gmail.com", "TOKEN"
+
+        monkeypatch.setattr(gcal, "sign_in", fake_sign_in)
         monkeypatch.setattr(
             "usmp.sdk.credentials.set_secret", lambda c, a, s: stored.update({a: s})
         )
 
         result = CliRunner().invoke(
-            app, ["auth", "google", "--client-secrets", str(secrets), "--write"]
+            app, ["auth", "google", "--client-secrets", str(secrets), "--write", "--no-browser"]
         )
 
         assert result.exit_code == 0, result.output
         assert stored == {"me@gmail.com:write": "TOKEN"}
         assert "google:account=me@gmail.com" in result.output
         assert "TOKEN" not in result.output
+        assert calls == [False]
+        assert "private window" in result.output
 
     def test_cli_sign_in_failure(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         secrets = tmp_path / "client.json"
         secrets.write_text("{}")
 
-        def fail(path: str, write: bool) -> tuple[str, str]:
+        def fail(path: str, write: bool, open_browser: bool) -> tuple[str, str]:
             raise ConnectorError("browser closed")
 
         monkeypatch.setattr(gcal, "sign_in", fail)
