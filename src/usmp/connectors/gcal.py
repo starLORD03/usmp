@@ -451,6 +451,8 @@ def _google_event(payload: Mapping[str, Any]) -> tuple[dict[str, Any], list[tupl
         kind = att.get("kind", "individual")
         if kind in ("group", "unknown"):
             changed.append(("attendees", f"{att['email']}: Google has no {kind} attendees"))
+        elif kind == "room":
+            changed.append(("attendees", f"{att['email']}: Google stores rooms as resources"))
         role = att.get("role", "required")
         if role in _ROLE_LOSS:
             changed.append(("attendees", f"{att['email']}: Google has no {role} role"))
