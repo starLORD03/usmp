@@ -26,6 +26,7 @@ from usmp.connectors._ical import (
     Converter,
     event_payload,
     local_time,
+    notes_with_conferences,
     parse_vcalendar,
     resolve_zone,
 )
@@ -63,23 +64,32 @@ EVENT_READ = sorted(
         "uid", "title", "description", "location", "start", "end", "time_zone", "end_time_zone",
         "status", "availability", "privacy", "recurrence_rules", "recurrence_dates",
         "excluded_dates", "recurrence_id", "organizer", "attendees", "alarms", "attachments",
+        "conferences", "provider_data",
     }
 )  # fmt: skip
 # Google only stores Drive attachments, and alarms must be before the start (checked per item).
 EVENT_WRITE = sorted(set(EVENT_READ) - {"attachments"})
 _ROLE_LOSS = frozenset({"chair", "non_participant"})
 _STATUS_OUT = {"needs_action": "needsAction", "delegated": "needsAction"}
-# Event properties that are deliberately not part of the calendar model.
-_IGNORED = frozenset(
+# Event properties mapped to the calendar model, or bookkeeping that Google rewrites anyway.
+# Everything else is kept under provider_data["google"] so it can be restored on Google.
+_MAPPED = frozenset(
     {
         "kind", "etag", "id", "htmlLink", "created", "updated", "creator", "iCalUID", "sequence",
         "summary", "description", "location", "start", "end", "status", "transparency",
         "visibility", "recurrence", "recurringEventId", "originalStartTime", "organizer",
-        "attendees", "reminders", "attachments", "endTimeUnspecified", "eventType",
-        "privateCopy", "locked", "guestsCanInviteOthers", "guestsCanModify",
-        "guestsCanSeeOtherGuests", "anyoneCanAddSelf",
+        "attendees", "reminders", "attachments", "endTimeUnspecified", "hangoutLink",
     }
 )  # fmt: skip
+# provider_data["google"] properties that events.import accepts.
+_RESTORABLE = frozenset(
+    {
+        "colorId", "conferenceData", "extendedProperties", "source", "guestsCanInviteOthers",
+        "guestsCanModify", "guestsCanSeeOtherGuests", "anyoneCanAddSelf", "privateCopy",
+    }
+)  # fmt: skip
+_CONF = {"conferenceDataVersion": 1}  # keep conferenceData when writing
+_ENTRY_FEATURES = {"video": ["video"], "phone": ["phone"], "sip": ["audio"]}
 
 
 def capabilities() -> CapabilityManifest:
@@ -246,11 +256,10 @@ class _EventConverter:
             if not att.get("email"):
                 conv.lose("attendees", "an attendee without an email address")
                 continue
-            if att.get("resource"):
-                conv.lose("attendees", f"{att['email']} is a room or resource")
             attendees.append(
                 {
                     "email": att["email"],
+                    "kind": "resource" if att.get("resource") else "individual",
                     "name": att.get("displayName"),
                     "role": "optional" if att.get("optional") else "required",
                     "status": {"needsAction": "needs_action", "accepted": "accepted",
@@ -275,14 +284,32 @@ class _EventConverter:
             {"uri": a["fileUrl"], "title": a.get("title"), "media_type": a.get("mimeType")}
             for a in ev.get("attachments", []) if a.get("fileUrl")
         ]  # fmt: skip
-        if ev.get("colorId"):
-            conv.lose("colorId", "Google colour ids are not part of the calendar model")
-        if ev.get("eventType", "default") not in ("default", "fromGmail"):
-            conv.lose("eventType", f"{ev['eventType']} events become ordinary events",
-                      LossReason.VALUE_CONVERTED)  # fmt: skip
-        for key in sorted(set(ev) - _IGNORED - {"colorId"}):
-            conv.lose(key, f"Google property {key} is not part of the calendar model")
+        payload["conferences"] = _conferences(ev)
+        google = {k: v for k, v in ev.items() if k not in _MAPPED}
+        if google.get("eventType") == "default":
+            del google["eventType"]
+        payload["provider_data"] = {"google": google}
         return payload
+
+
+def _conferences(ev: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Join links: Meet and add-on conferences, phone numbers with their PINs."""
+    found = []
+    for entry in (ev.get("conferenceData") or {}).get("entryPoints", []):
+        if not entry.get("uri"):
+            continue
+        label = entry.get("label")
+        pin = entry.get("pin") or entry.get("passcode") or entry.get("accessCode")
+        if pin and entry.get("entryPointType") == "phone":
+            label = f"{label or entry['uri'].removeprefix('tel:')} PIN: {pin}"
+        found.append({
+            "uri": entry["uri"],
+            "label": label,
+            "features": _ENTRY_FEATURES.get(entry.get("entryPointType", ""), []),
+        })  # fmt: skip
+    if ev.get("hangoutLink") and ev["hangoutLink"] not in {c["uri"] for c in found}:
+        found.append({"uri": ev["hangoutLink"], "features": ["video"]})
+    return found
 
 
 def _calendar_payload(entry: Mapping[str, Any]) -> dict[str, Any]:
@@ -421,6 +448,9 @@ def _google_event(payload: Mapping[str, Any]) -> tuple[dict[str, Any], list[tupl
                               if payload["organizer"].get("name") else {})}  # fmt: skip
     attendees = []
     for att in payload.get("attendees", []):
+        kind = att.get("kind", "individual")
+        if kind in ("group", "unknown"):
+            changed.append(("attendees", f"{att['email']}: Google has no {kind} attendees"))
         role = att.get("role", "required")
         if role in _ROLE_LOSS:
             changed.append(("attendees", f"{att['email']}: Google has no {role} role"))
@@ -431,6 +461,7 @@ def _google_event(payload: Mapping[str, Any]) -> tuple[dict[str, Any], list[tupl
             "email": att["email"],
             **({"displayName": att["name"]} if att.get("name") else {}),
             **({"optional": True} if role == "optional" else {}),
+            **({"resource": True} if kind in ("resource", "room") else {}),
             "responseStatus": _STATUS_OUT.get(status, status),
         })  # fmt: skip
     if attendees:
@@ -447,7 +478,41 @@ def _google_event(payload: Mapping[str, Any]) -> tuple[dict[str, Any], list[tupl
         changed.append(("alarms", "Google keeps at most 5 reminders"))
         overrides = overrides[:5]
     ev["reminders"] = {"useDefault": False, "overrides": overrides}
+    changed += _restore_provider_data(payload, ev)
     return ev, changed
+
+
+def _restore_provider_data(payload: Mapping[str, Any], ev: dict[str, Any]) -> list[tuple[str, str]]:
+    """Put Google's own properties back, and add join details Google cannot attach natively."""
+    changed: list[tuple[str, str]] = []
+    data = payload.get("provider_data", {})
+    google = dict(data.get("google", {}))
+    others = sorted(set(data) - {"google"})
+    if others:
+        changed.append(("provider_data", f"details from {', '.join(others)} are not kept"))
+    event_type = google.pop("eventType", "default")
+    if event_type != "default":
+        changed.append(("provider_data", f"Google only lets apps import ordinary events, so "
+                        f"this {event_type} event becomes an ordinary event"))  # fmt: skip
+        google.pop(f"{event_type}Properties", None)
+    dropped = sorted(set(google) - _RESTORABLE)
+    if dropped:
+        changed.append(("provider_data", f"Google does not accept {', '.join(dropped)} here"))
+    ev.update({k: v for k, v in google.items() if k in _RESTORABLE})
+    if "conferenceData" in ev:
+        ev["conferenceData"] = {
+            k: v for k, v in ev["conferenceData"].items() if k != "createRequest"
+        }
+    conferences = list(payload.get("conferences", []))
+    if conferences and "conferenceData" not in ev:
+        # Google can only attach meetings it created; keep the links readable in the notes.
+        notes = notes_with_conferences(payload.get("description"), conferences)
+        if notes is not None:
+            ev["description"] = notes
+        changed.append(("conferences", "join links were added to the event notes"))
+        if notes != payload.get("description"):
+            changed.append(("description", "join links were added to the event notes"))
+    return changed
 
 
 def _minutes_before(trigger: str) -> int | None:
@@ -567,9 +632,13 @@ class _GoogleWriter(Writer):
                 instance = f"{master}_{suffix}"
                 body.pop("iCalUID")
                 body.pop("recurrence", None)
-                saved = self._api.call("PUT", f"/calendars/{path_cal}/events/{instance}", body=body)
+                saved = self._api.call(
+                    "PUT", f"/calendars/{path_cal}/events/{instance}", params=_CONF, body=body
+                )
             else:
-                saved = self._api.call("POST", f"/calendars/{path_cal}/events/import", body=body)
+                saved = self._api.call(
+                    "POST", f"/calendars/{path_cal}/events/import", params=_CONF, body=body
+                )
                 masters[(cal_id, str(item.payload["uid"]))] = str(saved["id"])
             losses = [_import_loss(item, f, d) for f, d in changed]
             results[item.usmp_id] = WriteResult(

@@ -36,6 +36,26 @@ def connector(**extra: str) -> GoogleCalendarConnector:
     return GoogleCalendarConnector({"account": "me@example.com", **extra})
 
 
+MEET = {
+    "conferenceId": "abc-defg-hij",
+    "conferenceSolution": {"key": {"type": "hangoutsMeet"}, "name": "Google Meet"},
+    "entryPoints": [
+        {
+            "entryPointType": "video",
+            "uri": "https://meet.google.com/abc-defg-hij",
+            "label": "meet.google.com/abc-defg-hij",
+        },
+        {
+            "entryPointType": "phone",
+            "uri": "tel:+1-555-0100",
+            "label": "+1 555-0100",
+            "pin": "123456",
+        },
+        {"entryPointType": "more", "uri": "https://tel.meet/abc-defg-hij"},
+    ],
+}
+
+
 def seed(fake: FakeGoogle) -> None:
     fake.add_calendar(
         "me@example.com",
@@ -67,8 +87,10 @@ def seed(fake: FakeGoogle) -> None:
                 {"email": "room@resource.calendar.google.com", "resource": True},
             ],
             "reminders": {"useDefault": False, "overrides": [{"method": "popup", "minutes": 10}]},
-            "conferenceData": {"entryPoints": []},
+            "conferenceData": MEET,
+            "hangoutLink": "https://meet.google.com/abc-defg-hij",
             "colorId": "5",
+            "extendedProperties": {"private": {"app": "1"}},
         },
         {
             "id": "series_20260119T080000Z",
@@ -102,6 +124,7 @@ def seed(fake: FakeGoogle) -> None:
             "transparency": "transparent",
             "reminders": {"useDefault": True},
             "eventType": "outOfOffice",
+            "outOfOfficeProperties": {"autoDeclineMode": "declineNone"},
             "visibility": "private",
         },
         {
@@ -162,12 +185,25 @@ class TestReading:
         assert events["call@google.com|"]["time_zone"] == "Europe/Paris", "calendar zone applies"
         assert events["call@google.com|"]["start"] == "2026-03-01T16:00:00"
 
-        losses = {(loss.field, loss.reason.value) for r in records for loss in r.losses}
-        assert ("conferenceData", "unsupported_by_canonical") in losses
-        assert ("colorId", "unsupported_by_canonical") in losses
-        assert not any(f == "alarms" for f, _ in losses)
-        assert ("eventType", "value_converted") in losses
-        assert ("attendees", "unsupported_by_canonical") in losses
+        assert series["attendees"][1]["kind"] == "resource", "rooms stay rooms"
+        assert series["conferences"] == [
+            {"uri": "https://meet.google.com/abc-defg-hij",
+             "label": "meet.google.com/abc-defg-hij", "features": ["video"]},
+            {"uri": "https://tel.meet/abc-defg-hij"},
+            {"uri": "tel:+1-555-0100", "label": "+1 555-0100 PIN: 123456",
+             "features": ["phone"]},
+        ]  # fmt: skip
+        assert series["provider_data"] == {
+            "google": {
+                "colorId": "5",
+                "conferenceData": MEET,
+                "extendedProperties": {"private": {"app": "1"}},
+            }
+        }
+        assert events["trip@google.com|"]["provider_data"]["google"]["eventType"] == "outOfOffice"
+        assert "provider_data" not in moved, "nothing Google-only on the moved occurrence"
+
+        assert [loss for r in records for loss in r.losses] == [], "nothing is left behind"
         assert all(r.raw for r in records if r.item.type == "event")
 
     def test_source_session_only_reads(self, google: FakeGoogle) -> None:
@@ -333,6 +369,64 @@ def test_outlook_export_to_google_and_back(google: FakeGoogle, tmp_path: Path) -
 
     assert there.report is not None and there.report.ok, there.report
     assert back.report is not None and back.report.ok, back.report
+
+
+def test_google_details_survive_a_trip_through_ics(google: FakeGoogle, tmp_path: Path) -> None:
+    seed(google)
+    out = migrate(
+        connector(), IcsConnector({"path": str(tmp_path / "ics")}), bundle_path=tmp_path / "a.usmp"
+    )
+    assert out.report is not None and out.report.ok, out.report
+    assert out.report.summary.verified_with_declared_loss == 0, out.report
+    text = (tmp_path / "ics" / "Me.ics").read_text()
+    assert "CONFERENCE;FEATURE=VIDEO" in text
+    assert "Join online: https://meet.google.com/abc-defg-hij" in text, "visible in any app"
+
+    back = migrate(
+        IcsConnector({"path": str(tmp_path / "ics")}), connector(), bundle_path=tmp_path / "b.usmp"
+    )
+    assert back.report is not None and back.report.ok, back.report
+    declared = {
+        i.usmp_id: i.declared_loss_fields for i in back.report.items if i.declared_loss_fields
+    }
+    assert sorted(declared.values()) == [["name"], ["provider_data"]], (
+        "only the calendar name ('Me (2)') and the out-of-office type change"
+    )
+    restored = next(
+        ev for cal, evs in google.events.items() if cal != "me@example.com"
+        for ev in evs.values() if ev.get("iCalUID") == "series@google.com" and "recurrence" in ev
+    )  # fmt: skip
+    assert restored["conferenceData"]["conferenceId"] == "abc-defg-hij", "same Meet link"
+    assert restored["colorId"] == "5"
+    assert restored["attendees"][1]["resource"] is True
+
+
+def test_links_google_cannot_attach_go_into_the_notes(google: FakeGoogle, tmp_path: Path) -> None:
+    from usmp.connectors.memory import MemoryConnector
+
+    ev = event_item(
+        "s",
+        "1",
+        {
+            "uid": "z@x",
+            "start": "2026-01-01T09:00:00",
+            "time_zone": "UTC",
+            "description": "Agenda",
+            "conferences": [{"uri": "https://zoom.example/j/1", "features": ["video"]}],
+            "attendees": [{"email": "g@x.com", "kind": "group"}],
+            "provider_data": {"outlook": {"x": 1}},
+        },
+    )
+    result = migrate(
+        MemoryConnector({"domain": "calendar"}, items=[ev]), connector(), bundle_path=tmp_path / "b"
+    )
+    assert result.report is not None and result.report.ok, result.report
+    [item] = result.report.items
+    assert set(item.declared_loss_fields) == {
+        "attendees", "conferences", "description", "provider_data"
+    }  # fmt: skip
+    [stored] = [e for evs in google.events.values() for e in evs.values()]
+    assert stored["description"] == "Agenda\n\nJoin online: https://zoom.example/j/1"
 
 
 class TestApi:

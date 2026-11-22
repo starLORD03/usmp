@@ -45,11 +45,13 @@ Key words follow [RFC 2119](https://www.rfc-editor.org/rfc/rfc2119), as in the [
 | `excluded_dates` | list, same form as `start` | `EXDATE` |
 | `recurrence_id` | same form as `start` | Set on an overridden occurrence (§5). |
 | `organizer` | `{email, name?}` | |
-| `attendees` | list of `{email, name?, role?, status?}` | `role`: `chair` · `required` (default) · `optional` · `non_participant`. `status`: `needs_action` (default) · `accepted` · `declined` · `tentative` · `delegated`. |
+| `attendees` | list of `{email, name?, kind?, role?, status?}` | `kind` (iCalendar `CUTYPE`): `individual` (default) · `group` · `resource` · `room` · `unknown`. `role`: `chair` · `required` (default) · `optional` · `non_participant`. `status`: `needs_action` (default) · `accepted` · `declined` · `tentative` · `delegated`. |
 | `alarms` | list of `{trigger, action?}` | `trigger` is an ISO 8601 duration relative to `start` (e.g. `-PT15M`). `action`: `display` (default) · `email` · `audio`. |
 | `categories` | list of strings | |
 | `attachments` | list of `{uri, media_type?, title?}` | References only: files are not copied. |
 | `color` | `#rrggbb` | |
+| `conferences` | list of `{uri, label?, features?}` | Ways to join online or by phone (iCalendar `CONFERENCE`, RFC 7986). `features`: any of `audio` · `chat` · `feed` · `moderator` · `phone` · `screen` · `video`. |
+| `provider_data` | object: connector name → object | Provider-specific details with no place in the model (§7), so the event can be restored exactly on the same provider. Values are opaque JSON. |
 
 Creation and modification timestamps are deliberately **not** part of the model: every target sets
 its own, so they could never be verified.
@@ -88,15 +90,24 @@ form. The reference implementation's `usmp.domains.calendar.canonicalize()` prod
 5. Colours are lower-case `#rrggbb`. Durations use days and time only, largest units first, no
    leading `+` and no weeks (`P1W` → `P7D`, `PT90M` → `PT1H30M`, zero → `PT0S`).
 6. `categories`, `recurrence_dates` and `excluded_dates` are sorted and de-duplicated.
-   `attendees` are sorted by email (emails MUST be unique), `alarms` by trigger then action, and
-   `attachments` by URI.
+   `attendees` are sorted by email (emails MUST be unique), `alarms` by trigger then action,
+   `attachments` by URI, `conferences` by URI (duplicates removed, `features` sorted) and
+   `provider_data` by connector name, with empty entries removed.
 
 Implementations MUST reject items of this domain whose payload is invalid or not canonical.
 
 ## 7. Mapping notes for connectors
 
-* Properties the model cannot hold (e.g. provider-specific colours by id, conference links,
-  `X-` properties) MUST be reported as `unsupported_by_canonical` losses at export. Connectors
-  SHOULD keep the original in the bundle's `raw/` entry and MAY keep it in `extensions`.
+* Provider-specific properties that the model cannot express but the same provider could take
+  back (e.g. Google colour ids, event types, app data) SHOULD be kept in
+  `provider_data.<connector>`. They are part of the payload, so they are hashed and verified.
+  A target that cannot store another provider's entry MUST declare it as a loss on import.
+* Anything else the model cannot hold MUST be reported as an `unsupported_by_canonical` loss at
+  export. Connectors SHOULD keep the original in the bundle's `raw/` entry.
+* **iCalendar mapping.** `conferences` ↔ `CONFERENCE` (`X-GOOGLE-CONFERENCE` and
+  `X-MICROSOFT-SKYPETEAMSMEETINGURL` are also read as video conferences). `kind` ↔ `CUTYPE`.
+  `provider_data` ↔ `X-USMP-PROVIDER-DATA`, the base64 of the canonical JSON. Because many apps
+  ignore `CONFERENCE`, writers add the join links to the end of `DESCRIPTION`
+  ("Join online: …"); readers remove exactly that text again, so the notes round-trip unchanged.
 * A provider that cannot store a field (e.g. no per-event colour) declares it absent from
   `write_fields`; USMP then reports the loss before migrating.

@@ -94,11 +94,29 @@ class FakeGoogle:
             return 200, self._page(list(self.events[m[1]].values()), query)
         m = re.fullmatch(r"/calendars/([^/]+)/events/import", path)
         if m and method == "POST":
-            return self._import(m[1], body)
+            return self._import(m[1], self._like_google(body, query))
         m = re.fullmatch(r"/calendars/([^/]+)/events/([^/]+)_([0-9TZ]+)", path)
         if m and method == "PUT":
-            return self._update_instance(m[1], m[2], m[3], body)
+            return self._update_instance(m[1], m[2], m[3], self._like_google(body, query))
         return 404, {"error": f"no route for {method} {path}"}
+
+    @staticmethod
+    def _like_google(body: dict[str, Any], query: dict[str, str]) -> dict[str, Any]:
+        """What Google keeps of a written event."""
+        body = dict(body)
+        if query.get("conferenceDataVersion") != "1":
+            body.pop("conferenceData", None)  # ignored unless the client opts in
+        if (
+            "conferenceData" in body
+            and body["conferenceData"].get("conferenceSolution", {}).get("key", {}).get("type")
+            == "hangoutsMeet"
+        ):
+            video = [
+                e for e in body["conferenceData"]["entryPoints"] if e["entryPointType"] == "video"
+            ]
+            body["hangoutLink"] = video[0]["uri"]
+        body.pop("eventType", None)  # import only creates ordinary events
+        return body
 
     def _store(self, cal_id: str, ev: dict[str, Any]) -> dict[str, Any]:
         ev = copy.deepcopy(ev)
