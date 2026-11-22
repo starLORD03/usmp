@@ -204,8 +204,11 @@ def _recurrence(
 
 
 class _EventConverter:
-    def __init__(self, calendar_zone: str | None) -> None:
+    def __init__(
+        self, calendar_zone: str | None, default_reminders: Sequence[Mapping[str, Any]] = ()
+    ) -> None:
         self.zone = calendar_zone
+        self.default_reminders = list(default_reminders)
 
     def convert(self, ev: Mapping[str, Any], conv: Converter) -> dict[str, Any]:
         payload: dict[str, Any] = {"uid": ev.get("iCalUID") or ev["id"]}
@@ -257,12 +260,16 @@ class _EventConverter:
             )  # fmt: skip
         payload["attendees"] = attendees
         reminders = ev.get("reminders") or {}
-        if reminders.get("useDefault"):
-            conv.lose("alarms", "uses the calendar's default reminders", LossReason.VALUE_CONVERTED)
+        # "Use default reminders" means the calendar's defaults: copy them onto the event.
+        chosen = (
+            self.default_reminders
+            if reminders.get("useDefault")
+            else reminders.get("overrides", [])
+        )
         payload["alarms"] = [
             {"trigger": f"-PT{int(r['minutes'])}M",
              "action": "email" if r.get("method") == "email" else "display"}
-            for r in reminders.get("overrides", [])
+            for r in chosen
         ]  # fmt: skip
         payload["attachments"] = [
             {"uri": a["fileUrl"], "title": a.get("title"), "media_type": a.get("mimeType")}
@@ -296,7 +303,9 @@ def _records_for_calendar(api: _Api, entry: Mapping[str, Any]) -> Iterator[Expor
     cal_id = str(entry["id"])
     cal_item = calendar_item(NAME, cal_id, _calendar_payload(entry))
     yield ExportRecord(item=cal_item)
-    converter = _EventConverter(_zone(cal_item.payload.get("time_zone")))
+    converter = _EventConverter(
+        _zone(cal_item.payload.get("time_zone")), entry.get("defaultReminders") or ()
+    )
     raw_events = list(
         api.pages(f"/calendars/{quote(cal_id, safe='')}/events",
                   {"singleEvents": "false", "showDeleted": "false", "maxResults": 2500})

@@ -1,5 +1,6 @@
 """``usmp auth``: store and remove connector passwords in the OS keychain."""
 
+import sys
 from pathlib import Path
 from typing import Annotated
 
@@ -66,6 +67,11 @@ def google(
     from usmp.connectors import gcal
 
     try:
+        # The Google library prints the sign-in link with print(); make sure it appears at once
+        # even when output is not a terminal (otherwise it sits in a buffer until sign-in ends).
+        reconfigure = getattr(sys.stdout, "reconfigure", None)
+        if reconfigure is not None:
+            reconfigure(line_buffering=True)
         if no_browser:
             console.print(
                 "Open the link below in any browser (a private window works) and approve."
