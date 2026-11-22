@@ -86,6 +86,19 @@
           "default": null,
           "title": "Name"
         },
+        "kind": {
+          "default": "individual",
+          "description": "What the attendee is (iCalendar `CUTYPE`).",
+          "enum": [
+            "individual",
+            "group",
+            "resource",
+            "room",
+            "unknown"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
         "role": {
           "default": "required",
           "enum": [
@@ -116,6 +129,52 @@
       "title": "Attendee",
       "type": "object"
     },
+    "Conference": {
+      "additionalProperties": false,
+      "description": "A way to join the event online or by phone (iCalendar `CONFERENCE`, RFC 7986).",
+      "properties": {
+        "uri": {
+          "description": "Join link, e.g. `https://meet.example/abc`.",
+          "minLength": 1,
+          "title": "Uri",
+          "type": "string"
+        },
+        "label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Label"
+        },
+        "features": {
+          "items": {
+            "enum": [
+              "audio",
+              "chat",
+              "feed",
+              "moderator",
+              "phone",
+              "screen",
+              "video"
+            ],
+            "type": "string"
+          },
+          "title": "Features",
+          "type": "array"
+        }
+      },
+      "required": [
+        "uri"
+      ],
+      "title": "Conference",
+      "type": "object"
+    },
+    "JsonValue": {},
     "Person": {
       "additionalProperties": false,
       "properties": {
@@ -383,6 +442,26 @@
       ],
       "default": null,
       "title": "Color"
+    },
+    "conferences": {
+      "items": {
+        "$ref": "#/$defs/Conference"
+      },
+      "title": "Conferences",
+      "type": "array"
+    },
+    "provider_data": {
+      "description": "Provider-specific details with no place in the model, keyed by connector name, so the event can be restored exactly on the same provider.",
+      "patternProperties": {
+        "^[a-z][a-z0-9_-]*$": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "type": "object"
+        }
+      },
+      "title": "Provider Data",
+      "type": "object"
     }
   },
   "required": [

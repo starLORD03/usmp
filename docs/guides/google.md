@@ -55,19 +55,26 @@ $ usmp migrate --from google:account=you@gmail.com,calendar=Work \
 ## What carries over
 
 Titles, descriptions, locations, times and time zones, all-day events, recurring events with
-exceptions, moved and deleted occurrences, attendees and their responses, reminders,
-availability, visibility, and calendar names, colours and time zones.
+exceptions, moved and deleted occurrences, attendees and their responses, rooms, reminders
+(including "use default reminders"), availability, visibility, and calendar names, colours and
+time zones.
+
+**Meet links and dial-in numbers** become standard iCalendar `CONFERENCE` entries, and are also
+added to the end of the event notes ("Join online: https://meet.google.com/…"), so they show in
+Apple Calendar, Thunderbird and other apps that ignore `CONFERENCE`.
+
+**Google-only details** — event colours, out-of-office, focus-time and birthday details,
+"Created from Gmail" links, add-on data and guest permissions — are kept with each event (as
+`X-USMP-PROVIDER-DATA` in iCalendar). Other apps ignore them, but migrating back into Google
+restores them, including the same Meet link.
 
 Reported as **declared losses** (shown before you migrate):
 
-| From Google | Why |
-|---|---|
-| Meet / conference links, colour ids, event types (out-of-office, focus time) | not part of the calendar model; the original is kept in the backup bundle |
-| "Use default reminders" | the calendar's defaults are not part of each event |
-| Rooms and resources | kept as attendees, flagged |
-
 | Into Google | Why |
 |---|---|
+| Out-of-office, focus-time and birthday event types | Google only lets apps import ordinary events; the event itself is kept |
+| Meeting links from other apps (Zoom, Teams, …) | Google can only attach meetings it created; the links are added to the notes |
+| Group attendees | Google has no equivalent |
 | Attachments | Google only stores Google Drive files |
 | Chair and non-participant roles, delegated status | Google has no equivalent |
 | Reminders after the start, sound alarms, more than 5 reminders | Google limits reminders |

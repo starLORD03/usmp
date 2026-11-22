@@ -74,8 +74,10 @@ class TestReadingRealWorldExports:
                 "title": "plan.pdf",
             }
         ]
+        assert dentist["conferences"] == [
+            {"uri": "https://meet.google.com/xyz", "features": ["video"]}
+        ], "Google's own Meet property becomes a conference"
         found = losses(records)
-        assert ("X-GOOGLE-CONFERENCE", "unsupported_by_canonical") in found
         assert not any(f in {"DTSTAMP", "CREATED", "LAST-MODIFIED", "SEQUENCE"} for f, _ in found)
 
     def test_directory_of_files_is_one_calendar_per_file(self) -> None:
@@ -212,6 +214,47 @@ class TestEdgeCases:
             assert any(f == name for f, _ in found), name
         [ev] = events(records).values()
         assert [a["email"] for a in ev["attendees"]] == ["a@x.com", "room@x.com"]
+
+    def test_conferences_rooms_and_provider_data(self, tmp_path: Path) -> None:
+        records = read(
+            ics(
+                tmp_path,
+                vevent(
+                    "DTSTART:20260105T090000Z",
+                    "DESCRIPTION:Agenda\\n\\nJoin online: https://meet.example/a\\nJoin online: "
+                    "https://teams.example/t\\nJoin by phone: tel:+1-555-0100",
+                    "CONFERENCE;VALUE=URI;FEATURE=VIDEO,AUDIO;LABEL=Meet:https://meet.example/a",
+                    "CONFERENCE;VALUE=URI;FEATURE=PHONE,X-SPECIAL:tel:+1-555-0100",
+                    "X-MICROSOFT-SKYPETEAMSMEETINGURL:https://teams.example/t",
+                    "ATTENDEE;CUTYPE=ROOM:mailto:room@x.com",
+                    "ATTENDEE;CUTYPE=X-ROBOT:mailto:bot@x.com",
+                    "X-USMP-PROVIDER-DATA:eyJnb29nbGUiOnsiY29sb3JJZCI6IjUifX0=",
+                ),
+            )
+        )
+        [ev] = events(records).values()
+        assert ev["description"] == "Agenda", "join details added for other apps are removed"
+        assert ev["conferences"] == [
+            {"uri": "https://meet.example/a", "label": "Meet", "features": ["audio", "video"]},
+            {"uri": "https://teams.example/t", "features": ["video"]},
+            {"uri": "tel:+1-555-0100", "features": ["phone"]},
+        ]
+        kinds = {a["email"]: a.get("kind", "individual") for a in ev["attendees"]}
+        assert kinds == {"room@x.com": "room", "bot@x.com": "unknown"}
+        assert ev["provider_data"] == {"google": {"colorId": "5"}}
+        assert losses(records) == {
+            ("conferences", "value_converted"),
+            ("attendees", "value_converted"),
+        }
+
+    @pytest.mark.parametrize("value", ["not base64!", "WzFd"])  # garbage, and the JSON `[1]`
+    def test_damaged_provider_data_is_a_loss(self, tmp_path: Path, value: str) -> None:
+        records = read(
+            ics(tmp_path, vevent("DTSTART:20260105T090000Z", f"X-USMP-PROVIDER-DATA:{value}"))
+        )
+        [ev] = events(records).values()
+        assert "provider_data" not in ev
+        assert losses(records) == {("provider_data", "unsupported_by_canonical")}
 
     def test_missing_uid_is_generated(self, tmp_path: Path) -> None:
         path = ics(tmp_path, "BEGIN:VEVENT\nDTSTART:20260105T090000Z\nEND:VEVENT")
@@ -446,6 +489,23 @@ def canonical_events(draw: st.DrawFn) -> dict[str, Any]:
         st.lists(text.filter(lambda s: "," not in s and "\\" not in s), max_size=3)
     )
     payload["color"] = draw(st.one_of(st.none(), st.sampled_from(["#1a73e8", "#33b679"])))
+    payload["conferences"] = [
+        {"uri": uri, "label": draw(st.one_of(st.none(), text)), "features": features}
+        for uri, features in draw(
+            st.lists(
+                st.sampled_from(
+                    [("https://meet.example/a", ["video"]), ("tel:+1-555-0100", ["phone"]),
+                     ("https://chat.example/r", [])]
+                ),
+                max_size=2,
+                unique_by=lambda pair: pair[0],
+            )
+        )
+    ]  # fmt: skip
+    for att in payload["attendees"]:
+        att["kind"] = draw(st.sampled_from(["individual", "room", "resource", "group"]))
+    if draw(st.booleans()):
+        payload["provider_data"] = {"google": {"colorId": draw(text), "n": draw(st.integers())}}
     if draw(st.booleans()):
         payload["attachments"] = [
             {"uri": "https://files.example/a.pdf", "media_type": "application/pdf"}

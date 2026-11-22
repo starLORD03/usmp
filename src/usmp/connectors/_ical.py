@@ -4,9 +4,12 @@ Converts VEVENT components to canonical ``usmp.calendar/v1`` event payloads (col
 and back. See ``spec/domains/calendar.md``.
 """
 
+import base64
+import binascii
 import hashlib
+import json
 import re
-from collections.abc import Callable, Iterable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta, tzinfo
 from typing import Any
@@ -32,7 +35,8 @@ HANDLED = frozenset(
     {
         "UID", "DTSTART", "DTEND", "DURATION", "SUMMARY", "DESCRIPTION", "LOCATION", "URL",
         "STATUS", "TRANSP", "CLASS", "RRULE", "RDATE", "EXDATE", "RECURRENCE-ID", "ORGANIZER",
-        "ATTENDEE", "CATEGORIES", "ATTACH", "COLOR",
+        "ATTENDEE", "CATEGORIES", "ATTACH", "COLOR", "CONFERENCE", "X-USMP-PROVIDER-DATA",
+        "X-GOOGLE-CONFERENCE", "X-MICROSOFT-SKYPETEAMSMEETINGURL",
     }
 )  # fmt: skip
 # Bookkeeping every target rewrites; deliberately outside the calendar model (spec §3).
@@ -46,6 +50,13 @@ ROLE_IN = {
 ROLE_OUT = {v: k for k, v in ROLE_IN.items()}
 PARTSTAT = {"NEEDS-ACTION", "ACCEPTED", "DECLINED", "TENTATIVE", "DELEGATED"}
 ATTENDEE_PARAMS_KEPT = frozenset({"CN", "ROLE", "PARTSTAT", "RSVP", "CUTYPE"})
+CUTYPES = frozenset({"INDIVIDUAL", "GROUP", "RESOURCE", "ROOM", "UNKNOWN"})
+FEATURES = frozenset({"AUDIO", "CHAT", "FEED", "MODERATOR", "PHONE", "SCREEN", "VIDEO"})
+# Meeting links that other apps keep in their own properties.
+VENDOR_CONFERENCE = {
+    "X-GOOGLE-CONFERENCE": ["video"],
+    "X-MICROSOFT-SKYPETEAMSMEETINGURL": ["video"],
+}
 HEX_COLOR = re.compile(r"^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$")
 
 CALENDAR_FIELDS = sorted(Calendar.model_fields)
@@ -123,6 +134,84 @@ class Converter:
 
 def duration(td: timedelta) -> str:
     return str(icalendar.vDuration(td).to_ical().decode())  # type: ignore[no-untyped-call]
+
+
+def conference_notes(conferences: Iterable[Mapping[str, Any]]) -> str:
+    """Plain-text join details, added to an event's notes for apps that ignore CONFERENCE."""
+    lines = []
+    for conf in sorted(conferences, key=lambda c: ("video" not in c.get("features", []), c["uri"])):
+        features = conf.get("features", [])
+        if "video" in features:
+            lines.append(f"Join online: {conf['uri']}")
+        elif "phone" in features:
+            lines.append(f"Join by phone: {conf.get('label') or conf['uri']}")
+        else:
+            lines.append(f"{conf.get('label') or 'Join'}: {conf['uri']}")
+    return "\n".join(lines)
+
+
+def notes_with_conferences(
+    description: str | None, conferences: Sequence[Mapping[str, Any]]
+) -> str | None:
+    """``description`` plus join details for the conferences it does not already mention."""
+    base = description or ""
+    missing = [c for c in conferences if c["uri"] not in base]
+    if not missing:
+        return description
+    block = conference_notes(missing)
+    return f"{base}\n\n{block}" if base else block
+
+
+def notes_without_conferences(
+    description: str | None, conferences: Sequence[Mapping[str, Any]]
+) -> str | None:
+    """Undo :func:`notes_with_conferences`, so the notes read back exactly as they were."""
+    if not description or not conferences:
+        return description
+    base, sep, _ = description.rpartition("\n\n")
+    if sep and notes_with_conferences(base, conferences) == description:
+        return base
+    if notes_with_conferences(None, conferences) == description:
+        return None
+    return description
+
+
+def _param_list(value: Any) -> list[str]:
+    values = value if isinstance(value, list) else str(value).split(",")
+    return [str(v).strip().upper() for v in values if str(v).strip()]
+
+
+def _conference(prop: Any, conv: Converter) -> dict[str, Any]:
+    features = _param_list(prop.params.get("FEATURE", ""))
+    unknown = sorted(set(features) - FEATURES)
+    if unknown:
+        conv.lose(
+            "conferences",
+            f"conference features {', '.join(unknown)} are not supported",
+            LossReason.VALUE_CONVERTED,
+        )
+    return {
+        "uri": str(prop),
+        "label": prop.params.get("LABEL"),
+        "features": [f.lower() for f in features if f in FEATURES],
+    }
+
+
+def encode_provider_data(data: Mapping[str, Any]) -> str:
+    text = json.dumps(data, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return base64.b64encode(text.encode()).decode()
+
+
+def decode_provider_data(value: str, conv: Converter) -> dict[str, Any]:
+    try:
+        data = json.loads(base64.b64decode(value, validate=True))
+    except (binascii.Error, ValueError):
+        conv.lose("provider_data", "X-USMP-PROVIDER-DATA is damaged and was skipped")
+        return {}
+    if not isinstance(data, dict) or not all(isinstance(v, dict) for v in data.values()):
+        conv.lose("provider_data", "X-USMP-PROVIDER-DATA is not in the expected form")
+        return {}
+    return data
 
 
 def event_payload(ev: Any, conv: Converter) -> dict[str, Any]:
@@ -227,10 +316,18 @@ def event_payload(ev: Any, conv: Converter) -> dict[str, Any]:
         else:
             conv.lose("attendees", f"attendee status {partstat} is not supported")
         cutype = str(att.params.get("CUTYPE", "INDIVIDUAL")).upper()
+        if cutype in CUTYPES:
+            entry["kind"] = cutype.lower()
+        else:
+            entry["kind"] = "unknown"
+            conv.lose(
+                "attendees",
+                f"attendee {email}: CUTYPE={cutype} treated as unknown",
+                LossReason.VALUE_CONVERTED,
+            )
         extra = sorted(set(att.params) - ATTENDEE_PARAMS_KEPT)
-        if cutype != "INDIVIDUAL" or extra:
-            details = ([f"CUTYPE={cutype}"] if cutype != "INDIVIDUAL" else []) + extra
-            conv.lose("attendees", f"attendee {email}: {', '.join(details)} not kept")
+        if extra:
+            conv.lose("attendees", f"attendee {email}: {', '.join(extra)} not kept")
         attendees[email] = entry
     payload["attendees"] = list(attendees.values())
 
@@ -273,6 +370,24 @@ def event_payload(ev: Any, conv: Converter) -> dict[str, Any]:
         else:
             conv.lose("color", f"colour {color!r} is not a hex colour")
 
+    conferences = [_conference(c, conv) for c in as_list(ev.get("CONFERENCE"))]
+    known = {c["uri"] for c in conferences}
+    for prop, features in VENDOR_CONFERENCE.items():
+        for value in as_list(ev.get(prop)):
+            if str(value) not in known:
+                conferences.append({"uri": str(value), "features": features})
+                known.add(str(value))
+    payload["conferences"] = conferences
+    if "description" in payload:
+        notes = notes_without_conferences(payload["description"], conferences)
+        if notes is None:
+            del payload["description"]
+        else:
+            payload["description"] = notes
+
+    if "X-USMP-PROVIDER-DATA" in ev:
+        payload["provider_data"] = decode_provider_data(str(ev["X-USMP-PROVIDER-DATA"]), conv)
+
     for name in ev:
         if name not in HANDLED and name not in BOOKKEEPING:
             conv.lose(name, f"iCalendar property {name} is not part of the calendar model")
@@ -310,10 +425,13 @@ def vevent(payload: Mapping[str, Any]) -> icalendar.Event:
     ev.add("dtstart", to_ical_time(payload["start"], zone))
     if "end" in payload:
         ev.add("dtend", to_ical_time(payload["end"], payload.get("end_time_zone", zone)))
-    for key, prop in (("title", "summary"), ("description", "description"),
-                      ("location", "location"), ("url", "url")):  # fmt: skip
-        if key in payload:
-            ev.add(prop, payload[key])
+    conferences = list(payload.get("conferences", []))
+    notes = notes_with_conferences(payload.get("description"), conferences)
+    texts = (("summary", payload.get("title")), ("description", notes),
+             ("location", payload.get("location")), ("url", payload.get("url")))  # fmt: skip
+    for prop, value in texts:
+        if value is not None:
+            ev.add(prop, value)
     if "status" in payload:
         ev.add("status", payload["status"].upper())
     if "availability" in payload:
@@ -337,6 +455,8 @@ def vevent(payload: Mapping[str, Any]) -> icalendar.Event:
         addr = icalendar.vCalAddress("mailto:" + att["email"])
         if att.get("name"):
             addr.params["CN"] = _param(att["name"])
+        if att.get("kind", "individual") != "individual":
+            addr.params["CUTYPE"] = att["kind"].upper()
         addr.params["ROLE"] = ROLE_OUT[att.get("role", "required")]
         addr.params["PARTSTAT"] = att.get("status", "needs_action").upper().replace("_", "-")
         ev.add("attendee", addr)
@@ -358,6 +478,20 @@ def vevent(payload: Mapping[str, Any]) -> icalendar.Event:
         ev.add("attach", att["uri"], parameters=params)
     if "color" in payload:
         ev.add("color", payload["color"])
+    for conf in conferences:
+        params = {"VALUE": "URI"}
+        if conf.get("features"):
+            params["FEATURE"] = ",".join(f.upper() for f in conf["features"])
+        if conf.get("label"):
+            params["LABEL"] = _param(conf["label"])
+        prop = icalendar.vUri(conf["uri"])
+        prop_params: Any = prop.params
+        prop_params.update(params)
+        # Quote LABEL like CN, so a label ending in a backslash survives (see _param).
+        prop_params.always_quoted = (*prop_params.always_quoted, "LABEL")
+        ev.add("conference", prop)
+    if payload.get("provider_data"):
+        ev.add("x-usmp-provider-data", encode_provider_data(payload["provider_data"]))
     return ev
 
 

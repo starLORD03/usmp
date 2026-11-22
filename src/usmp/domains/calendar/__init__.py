@@ -14,6 +14,7 @@ from usmp.domains.calendar.model import (
     Attachment,
     Attendee,
     Calendar,
+    Conference,
     Event,
     Person,
 )
@@ -98,6 +99,7 @@ __all__ = [
     "Attachment",
     "Attendee",
     "Calendar",
+    "Conference",
     "Event",
     "Person",
     "calendar_item",

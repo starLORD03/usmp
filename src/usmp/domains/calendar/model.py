@@ -15,6 +15,7 @@ and ordering, and uses the time formats below.
 """
 
 import functools
+import json
 import re
 from datetime import date, datetime
 from typing import Annotated, Any, Literal, Self
@@ -26,6 +27,8 @@ from pydantic import (
     BeforeValidator,
     ConfigDict,
     Field,
+    JsonValue,
+    StringConstraints,
     field_validator,
     model_validator,
 )
@@ -178,6 +181,9 @@ class Person(_Model):
 
 
 class Attendee(Person):
+    kind: Literal["individual", "group", "resource", "room", "unknown"] = Field(
+        default="individual", description="What the attendee is (iCalendar `CUTYPE`)."
+    )
     role: Literal["chair", "required", "optional", "non_participant"] = "required"
     status: Literal["needs_action", "accepted", "declined", "tentative", "delegated"] = (
         "needs_action"
@@ -193,6 +199,20 @@ class Attachment(_Model):
     uri: str = Field(min_length=1, description="Where the file lives. Files are not copied.")
     media_type: Text = None
     title: Text = None
+
+
+class Conference(_Model):
+    """A way to join the event online or by phone (iCalendar `CONFERENCE`, RFC 7986)."""
+
+    uri: str = Field(min_length=1, description="Join link, e.g. `https://meet.example/abc`.")
+    label: Text = None
+    features: Annotated[
+        list[Literal["audio", "chat", "feed", "moderator", "phone", "screen", "video"]],
+        AfterValidator(_sorted_unique),
+    ] = Field(default_factory=list)
+
+
+ProviderName = Annotated[str, StringConstraints(pattern=r"^[a-z][a-z0-9_-]*$")]
 
 
 class Event(_Model):
@@ -233,6 +253,12 @@ class Event(_Model):
     categories: Annotated[list[str], AfterValidator(_sorted_unique)] = Field(default_factory=list)
     attachments: list[Attachment] = Field(default_factory=list)
     color: Color | None = None
+    conferences: list[Conference] = Field(default_factory=list)
+    provider_data: dict[ProviderName, dict[str, JsonValue]] = Field(
+        default_factory=dict,
+        description="Provider-specific details with no place in the model, keyed by connector "
+        "name, so the event can be restored exactly on the same provider.",
+    )
 
     @field_validator("attendees")
     @classmethod
@@ -251,6 +277,19 @@ class Event(_Model):
     @classmethod
     def _attachments_sorted(cls, value: list[Attachment]) -> list[Attachment]:
         return sorted(set(value), key=lambda a: a.uri)
+
+    @field_validator("conferences")
+    @classmethod
+    def _conferences_sorted(cls, value: list[Conference]) -> list[Conference]:
+        unique = {(c.uri, json.dumps(c.model_dump(mode="json"), sort_keys=True)): c for c in value}
+        return [unique[k] for k in sorted(unique)]
+
+    @field_validator("provider_data")
+    @classmethod
+    def _drop_empty_providers(
+        cls, value: dict[str, dict[str, JsonValue]]
+    ) -> dict[str, dict[str, JsonValue]]:
+        return {k: v for k, v in sorted(value.items()) if v}
 
     @property
     def all_day(self) -> bool:
