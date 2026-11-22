@@ -35,7 +35,10 @@ SCHEMA_VERSION = 1
 
 _DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _LOCAL_DATETIME = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$")
-_DURATION = re.compile(r"^[+-]?P(?=\d|T\d)(\d+W)?(\d+D)?(T(\d+H)?(\d+M)?(\d+S)?)?$")
+_DURATION = re.compile(
+    r"^[+-]?P(?=\d|T\d)(?:(?P<W>\d+)W)?(?:(?P<D>\d+)D)?"
+    r"(?:T(?=\d)(?:(?P<H>\d+)H)?(?:(?P<M>\d+)M)?(?:(?P<S>\d+)S)?)?$"
+)
 _EMAIL = re.compile(r"^[^@\s]+@[^@\s]+$")
 _COLOR = re.compile(r"^#[0-9a-f]{6}$")
 _UTC_ALIASES = frozenset({"UTC", "Etc/UTC", "Etc/GMT", "GMT", "Etc/Universal", "Z", "Zulu"})
@@ -119,10 +122,21 @@ def _normalise_color(value: str) -> str:
 
 
 def _normalise_duration(value: str) -> str:
-    value = value.strip().upper()
-    if not _DURATION.fullmatch(value):
+    """Canonical duration: days and time only (``P1W`` becomes ``P7D``), largest units first."""
+    text = value.strip().upper()
+    match = _DURATION.fullmatch(text)
+    if not match:
         raise ValueError(f"{value!r} is not an ISO 8601 duration such as -PT15M")
-    return value.removeprefix("+")
+    weeks, days, hours, minutes, seconds = (int(match[unit] or 0) for unit in "WDHMS")
+    total = (((weeks * 7 + days) * 24 + hours) * 60 + minutes) * 60 + seconds
+    sign = "-" if text.startswith("-") and total else ""
+    d, rem = divmod(total, 86400)
+    h, rem = divmod(rem, 3600)
+    m, s = divmod(rem, 60)
+    time = "".join(f"{n}{unit}" for n, unit in ((h, "H"), (m, "M"), (s, "S")) if n)
+    if not d and not time:
+        return "PT0S"
+    return f"{sign}P{f'{d}D' if d else ''}{f'T{time}' if time else ''}"
 
 
 def _sorted_unique(values: list[str]) -> list[str]:

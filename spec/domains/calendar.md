@@ -85,7 +85,8 @@ form. The reference implementation's `usmp.domains.calendar.canonicalize()` prod
 3. RRULEs are upper-case, with `FREQ` first and the other parts sorted by name
    (`FREQ=WEEKLY;BYDAY=MO;INTERVAL=2`).
 4. Email addresses are lower-case without `mailto:`.
-5. Colours are lower-case `#rrggbb`. Durations are upper-case without a leading `+`.
+5. Colours are lower-case `#rrggbb`. Durations use days and time only, largest units first, no
+   leading `+` and no weeks (`P1W` → `P7D`, `PT90M` → `PT1H30M`, zero → `PT0S`).
 6. `categories`, `recurrence_dates` and `excluded_dates` are sorted and de-duplicated.
    `attendees` are sorted by email (emails MUST be unique), `alarms` by trigger then action, and
    `attachments` by URI.
