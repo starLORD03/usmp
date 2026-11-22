@@ -26,7 +26,7 @@ def test_schemas_are_valid_draft_2020_12(schema: dict[str, object]) -> None:
 
 
 def test_no_unexpected_committed_files() -> None:
-    committed = {str(p.relative_to(COMMITTED)) for p in COMMITTED.rglob("*.json")}
+    committed = {p.relative_to(COMMITTED).as_posix() for p in COMMITTED.rglob("*.json")}
 
     assert committed == set(schemas.generate())
 
@@ -50,4 +50,4 @@ def test_item_example_validates_against_published_schema() -> None:
 def test_write_creates_files(tmp_path: Path) -> None:
     written = schemas.write(tmp_path)
 
-    assert {str(p.relative_to(tmp_path)) for p in written} == set(schemas.generate())
+    assert {p.relative_to(tmp_path).as_posix() for p in written} == set(schemas.generate())
