@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://starlord03.github.io/usmp/schemas/domains/calendar/v1/calendar.schema.json",
+  "additionalProperties": false,
+  "description": "A collection of events.",
+  "properties": {
+    "name": {
+      "minLength": 1,
+      "title": "Name",
+      "type": "string"
+    },
+    "description": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Description"
+    },
+    "color": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Color"
+    },
+    "time_zone": {
+      "anyOf": [
+        {
+          "description": "IANA time zone name.",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Default zone for new events.",
+      "title": "Time Zone"
+    }
+  },
+  "required": [
+    "name"
+  ],
+  "title": "Calendar",
+  "type": "object"
+}

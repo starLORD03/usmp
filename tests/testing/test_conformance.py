@@ -20,19 +20,19 @@ from usmp.testing import (
 )
 
 
-def calendar_items() -> list[Item]:
+def demo_items() -> list[Item]:
     cal = Item.create(
         connector="seed",
         native_id="cal",
-        domain="calendar",
-        type="calendar",
+        domain="demo",
+        type="demo",
         schema_version=1,
         payload={"name": "Work"},
     )
     event = Item.create(
         connector="seed",
         native_id="e1",
-        domain="calendar",
+        domain="demo",
         type="event",
         schema_version=1,
         parent=cal.usmp_id,
@@ -45,31 +45,31 @@ def calendar_items() -> list[Item]:
 
 
 class TestMemoryConformance(ConnectorConformance):
-    domain = "calendar"
+    domain = "demo"
 
     def make_connector(self) -> MemoryConnector:
-        self.connector = MemoryConnector({"domain": "calendar"})
+        self.connector = MemoryConnector({"domain": "demo"})
         return self.connector
 
     def sample_items(self) -> list[Item]:
-        return calendar_items()
+        return demo_items()
 
     def provider_state(self) -> Any:
         return dict(self.connector.items)
 
 
 class TestJsonDirConformance(ConnectorConformance):
-    domain = "calendar"
+    domain = "demo"
 
     @pytest.fixture(autouse=True)
     def _dir(self, tmp_path: Path) -> None:
         self.path = tmp_path
 
     def make_connector(self) -> JsonDirConnector:
-        return JsonDirConnector({"path": str(self.path), "domain": "calendar"})
+        return JsonDirConnector({"path": str(self.path), "domain": "demo"})
 
     def sample_items(self) -> list[Item]:
-        return calendar_items()
+        return demo_items()
 
     def provider_state(self) -> Any:
         return {
@@ -79,7 +79,7 @@ class TestJsonDirConformance(ConnectorConformance):
 
 def test_hooks_must_be_implemented() -> None:
     class Incomplete(ConnectorConformance):
-        domain = "calendar"
+        domain = "demo"
 
     with pytest.raises(NotImplementedError):
         Incomplete().make_connector()
@@ -221,24 +221,24 @@ class TestReadCheck:
     )
     def test_violations(self, record: ExportRecord, message: str) -> None:
         with pytest.raises(ConformanceError, match=message):
-            check_read(broken(reader=reader_yielding(record)), "calendar")
+            check_read(broken(reader=reader_yielding(record)), "demo")
 
     def test_duplicates(self) -> None:
         record = ExportRecord(item=self.event)
         with pytest.raises(ConformanceError, match="twice"):
-            check_read(broken(reader=reader_yielding(record, record)), "calendar")
+            check_read(broken(reader=reader_yielding(record, record)), "demo")
 
     def test_child_before_parent(self) -> None:
         parent = mem(make_event("p"))
         child = mem(make_event("c"), parent=parent.usmp_id)
         reader = reader_yielding(ExportRecord(item=child), ExportRecord(item=parent))
         with pytest.raises(ConformanceError, match="before its parent"):
-            check_read(broken(reader=reader), "calendar")
+            check_read(broken(reader=reader), "demo")
 
     def test_reading_changes_state(self) -> None:
         counter = iter(range(10))
         with pytest.raises(ConformanceError, match="changed the provider"):
-            check_read(broken(reader=reader_yielding()), "calendar", lambda: next(counter))
+            check_read(broken(reader=reader_yielding()), "demo", lambda: next(counter))
 
 
 class TestRoundTripCheck:
@@ -264,34 +264,34 @@ class TestRoundTripCheck:
         return W()
 
     def test_passes_for_faithful_writer(self) -> None:
-        assert len(check_round_trip(broken(writer=self.writer()), self.items, "calendar")) == 1
+        assert len(check_round_trip(broken(writer=self.writer()), self.items, "demo")) == 1
 
     def test_missing_results(self) -> None:
         with pytest.raises(ConformanceError, match="one result per item"):
-            check_round_trip(broken(writer=self.writer(results=[])), self.items, "calendar")
+            check_round_trip(broken(writer=self.writer(results=[])), self.items, "demo")
 
     def test_duplicate_native_ids(self) -> None:
         two = [make_event("1"), make_event("2")]
         dup = [WriteResult(usmp_id=i.usmp_id, native_id="same") for i in two]
         with pytest.raises(ConformanceError, match="duplicate native ids"):
-            check_round_trip(broken(writer=self.writer(results=dup)), two, "calendar")
+            check_round_trip(broken(writer=self.writer(results=dup)), two, "demo")
 
     def test_unreadable_item(self) -> None:
         with pytest.raises(ConformanceError, match="could not be read back"):
-            check_round_trip(broken(writer=self.writer(back=[])), self.items, "calendar")
+            check_round_trip(broken(writer=self.writer(back=[])), self.items, "demo")
 
     def test_unrequested_item(self) -> None:
         extra = [mem(self.items[0], native_id="n0"), mem(self.items[0], native_id="zzz")]
         with pytest.raises(ConformanceError, match="not asked for"):
-            check_round_trip(broken(writer=self.writer(back=extra)), self.items, "calendar")
+            check_round_trip(broken(writer=self.writer(back=extra)), self.items, "demo")
 
     def test_changed_field(self) -> None:
         changed = [mem(self.items[0], native_id="n0", payload={"title": "X", "start": "S"})]
         with pytest.raises(ConformanceError, match=r"field 'title' .* changed"):
-            check_round_trip(broken(writer=self.writer(back=changed)), self.items, "calendar")
+            check_round_trip(broken(writer=self.writer(back=changed)), self.items, "demo")
 
     def test_undeclared_type(self) -> None:
         todo = [mem(make_event("1"), type="todo")]
         back = [mem(todo[0], native_id="n0")]
         with pytest.raises(ConformanceError, match="does not declare"):
-            check_round_trip(broken(writer=self.writer(back=back)), todo, "calendar")
+            check_round_trip(broken(writer=self.writer(back=back)), todo, "demo")

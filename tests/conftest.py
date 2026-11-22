@@ -15,7 +15,7 @@ def make_event(native_id: str, connector: str = "memory", **payload: object) -> 
     return Item.create(
         connector=connector,
         native_id=native_id,
-        domain="calendar",
+        domain="demo",
         type="event",
         schema_version=1,
         payload=payload or {"title": f"Event {native_id}", "start": "2026-01-05T09:00:00Z"},
@@ -33,7 +33,7 @@ def make_capabilities(
         version="1",
         domains=[
             DomainCapability(
-                domain="calendar",
+                domain="demo",
                 schema_version=1,
                 types=[
                     TypeCapability(
@@ -54,4 +54,4 @@ def capabilities() -> CapabilityManifest:
 
 @pytest.fixture
 def source_info() -> ConnectorInfo:
-    return ConnectorInfo(connector="memory", display_name="Memory", label="test calendar")
+    return ConnectorInfo(connector="memory", display_name="Memory", label="test demo")

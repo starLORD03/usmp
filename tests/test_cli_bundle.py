@@ -25,7 +25,7 @@ def test_inspect(
     result = runner.invoke(app, ["bundle", "inspect", str(path)])
 
     assert result.exit_code == 0, result.output
-    assert "Memory (test calendar)" in result.output
+    assert "Memory (test demo)" in result.output
     assert "event" in result.output
     assert "2" in result.output
 

@@ -4,6 +4,7 @@
 |---|---|
 | Status | **Draft 0.1** (Phase 1). Breaking changes are possible until spec 1.0. |
 | Schemas | [`schemas/core/`](schemas/core/) (JSON Schema 2020-12, generated from the reference implementation) |
+| Domains | [Calendar](domains/calendar.md) |
 | Editors | starLORD03 |
 
 The key words MUST, MUST NOT, REQUIRED, SHOULD, SHOULD NOT and MAY are to be interpreted as
