@@ -115,7 +115,8 @@ class _CalDavReader(Reader):
         if domain != "calendar":
             return
         with _errors("listing calendars"):
-            calendars = self._client.principal().calendars()
+            # Servers list calendars in no particular order; keep exports deterministic.
+            calendars = sorted(self._client.principal().calendars(), key=lambda c: str(c.url))
         found = []
         for cal in calendars:
             with _errors("reading a calendar"):
@@ -131,7 +132,7 @@ class _CalDavReader(Reader):
                 yield from _records_for_resource(obj, cal_item.usmp_id)
         if self._only and self._only not in found:
             raise ConnectorError(
-                f"no calendar named {self._only!r}; available: {', '.join(found) or 'none'}"
+                f"no calendar named {self._only!r}; available: {', '.join(sorted(found)) or 'none'}"
             )
 
     def close(self) -> None:
