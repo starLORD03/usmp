@@ -43,6 +43,7 @@ def seed(fake: FakeGoogle) -> None:
         timeZone="Europe/Paris",
         backgroundColor="#9FE1E7",
         description="Personal",
+        defaultReminders=[{"method": "popup", "minutes": 30}, {"method": "email", "minutes": 1440}],
     )
     fake.add_calendar("holidays@group", "Holidays", accessRole="freeBusyReader")
     events: list[dict[str, Any]] = [
@@ -154,13 +155,17 @@ class TestReading:
         assert events["trip@google.com|"]["start"] == "2026-02-10"
         assert events["trip@google.com|"]["availability"] == "free"
         assert events["trip@google.com|"]["privacy"] == "private"
+        assert events["trip@google.com|"]["alarms"] == [
+            {"trigger": "-P1D", "action": "email"},
+            {"trigger": "-PT30M"},
+        ], "'use default reminders' copies the calendar's defaults"
         assert events["call@google.com|"]["time_zone"] == "Europe/Paris", "calendar zone applies"
         assert events["call@google.com|"]["start"] == "2026-03-01T16:00:00"
 
         losses = {(loss.field, loss.reason.value) for r in records for loss in r.losses}
         assert ("conferenceData", "unsupported_by_canonical") in losses
         assert ("colorId", "unsupported_by_canonical") in losses
-        assert ("alarms", "value_converted") in losses
+        assert not any(f == "alarms" for f, _ in losses)
         assert ("eventType", "value_converted") in losses
         assert ("attendees", "unsupported_by_canonical") in losses
         assert all(r.raw for r in records if r.item.type == "event")
