@@ -161,9 +161,7 @@ class _JsonDirWriter(Writer):
                 continue
             item = _load(path, removal.native_id)
             if item.usmp_id != removal.usmp_id or item.domain != domain:
-                yield RemovalResult(
-                    removal.usmp_id, RemovalOutcome.KEPT, "a different item is there"
-                )
+                yield RemovalResult(removal.usmp_id, RemovalOutcome.KEPT, _OTHER_ITEM)
             elif any(
                 _load(other, f"{other.parent.name}/{other.stem}").parent == item.usmp_id
                 for other in self._root.glob("*/*.json")
