@@ -211,6 +211,13 @@
           "minimum": 0,
           "title": "Already Present",
           "type": "integer"
+        },
+        "left_out": {
+          "default": 0,
+          "description": "Exported items outside the selection: kept in the backup, not migrated and not counted in `total`.",
+          "minimum": 0,
+          "title": "Left Out",
+          "type": "integer"
         }
       },
       "required": [
@@ -221,6 +228,50 @@
         "missing"
       ],
       "title": "ReportSummary",
+      "type": "object"
+    },
+    "Selection": {
+      "additionalProperties": false,
+      "description": "Which part of the exported data a migration moves (spec §8.2).\n\nEverything is still exported into the backup bundle; items outside the selection are left out\nof the import and the verification, and counted as ``left_out`` in the report.",
+      "properties": {
+        "since": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Keep items that end after this instant. Items without a zone (all-day, floating) are compared by wall-clock time in this value's UTC offset.",
+          "title": "Since"
+        },
+        "until": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Keep items that start before this instant (exclusive). Items without a zone are compared by wall-clock time in this value's UTC offset.",
+          "title": "Until"
+        },
+        "collections": {
+          "description": "Keep only these collections (calendars), by name, ignoring case. Empty means all.",
+          "items": {
+            "type": "string"
+          },
+          "title": "Collections",
+          "type": "array"
+        }
+      },
+      "title": "Selection",
       "type": "object"
     },
     "Severity": {
@@ -298,6 +349,18 @@
       },
       "title": "Errors",
       "type": "array"
+    },
+    "selection": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Selection"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "The part of the data that was migrated; absent means all."
     },
     "ok": {
       "description": "True when nothing is mismatched or missing and no errors occurred.",

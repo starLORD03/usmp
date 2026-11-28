@@ -117,3 +117,21 @@ Implementations MUST reject items of this domain whose payload is invalid or not
   they create, where the server allows it. Google Calendar writers use the private extended
   property `usmp_id`. Readers MUST NOT put these markers into the payload or `provider_data`:
   they identify an item, they are not part of it.
+
+## 8. Selecting events
+
+How a selection (core spec §8.2) applies to calendar items:
+
+* **Calendars.** With `collections`, only calendars whose `name` matches one of them (ignoring
+  case) are kept, even if none of their events is; a name that matches no calendar is an error.
+  Without `collections`, every calendar that still holds a kept event is kept.
+* **Events.** An event is in the date range when it starts before `until` and ends after `since`
+  (an event with no length is in range when it starts at or after `since`). Without `end`, an
+  all-day event lasts one day and a timed event has no length. Zoned times are compared as
+  instants. All-day and floating times are compared by wall-clock time against the bound's own
+  wall-clock time, so `since: 2026-01-01T00:00+01:00` keeps an all-day event on 1 January.
+* **Series are never cut.** Events sharing a calendar and a `uid` (a master and its overridden
+  occurrences) are kept or left out together. A series is kept when any of its members is in
+  range, or when any occurrence produced by the master's `recurrence_rules` or
+  `recurrence_dates` is. `excluded_dates` are not considered, so a series is never dropped because
+  of them. An event whose times cannot be worked out is kept.

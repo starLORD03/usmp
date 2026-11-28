@@ -2476,6 +2476,15 @@ wheels = [
 ]
 
 [[package]]
+name = "types-python-dateutil"
+version = "2.9.0.20261122"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/9c/e1/061ae807e1d0dc1cd54ae2b43e04bbda4faa80d5ce2b81ed1bedd34d2c27/types_python_dateutil-2.9.0.20261122.tar.gz", hash = "sha256:1db0012e9e63028891e36fd8a9f685dc4e8cf89353fbefcf6b1eb55538e9f7ed", size = 17919, upload-time = "2026-11-22T08:59:23.569Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a1/46/38042f56835e926128d129e1d327bef8bf3803ec791af393f9f5e827bc96/types_python_dateutil-2.9.0.20261122-py3-none-any.whl", hash = "sha256:c2c257d7ce04f8ede622bb2452223461ee3016872f59d2351522723073e226ff", size = 18519, upload-time = "2026-11-22T08:59:22.835Z" },
+]
+
+[[package]]
 name = "types-requests"
 version = "2.33.0.20261030"
 source = { registry = "https://pypi.org/simple" }
@@ -2549,6 +2558,7 @@ dependencies = [
     { name = "icalendar" },
     { name = "keyring" },
     { name = "pydantic" },
+    { name = "python-dateutil" },
     { name = "rich" },
     { name = "typer" },
     { name = "tzdata", marker = "sys_platform == 'win32'" },
@@ -2576,6 +2586,7 @@ dev = [
     { name = "responses" },
     { name = "ruff" },
     { name = "types-jsonschema" },
+    { name = "types-python-dateutil" },
     { name = "types-requests" },
 ]
 docs = [
@@ -2590,6 +2601,7 @@ requires-dist = [
     { name = "icalendar", specifier = ">=6.1" },
     { name = "keyring", specifier = ">=25" },
     { name = "pydantic", specifier = ">=2.8" },
+    { name = "python-dateutil", specifier = ">=2.8" },
     { name = "requests", marker = "extra == 'google'", specifier = ">=2.32" },
     { name = "rich", specifier = ">=13" },
     { name = "typer", specifier = ">=0.12" },
@@ -2612,6 +2624,7 @@ dev = [
     { name = "responses", specifier = ">=0.25" },
     { name = "ruff", specifier = ">=0.6" },
     { name = "types-jsonschema", specifier = ">=4.26.0.20261006" },
+    { name = "types-python-dateutil", specifier = ">=2.9.0.20261122" },
     { name = "types-requests", specifier = ">=2.33.0.20261030" },
 ]
 docs = [{ name = "zensical", specifier = ">=0.1.3" }]

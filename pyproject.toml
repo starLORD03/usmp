@@ -27,6 +27,7 @@ dependencies = [
     "icalendar>=6.1",
     "keyring>=25",
     "pydantic>=2.8",
+    "python-dateutil>=2.8",
     "rich>=13",
     "typer>=0.12",
     "tzdata>=2024.1 ; sys_platform == 'win32'",
@@ -70,6 +71,7 @@ dev = [
     "google-auth-oauthlib>=1.2",
     "requests>=2.32",
     "types-requests>=2.33.0.20261030",
+    "types-python-dateutil>=2.9.0.20261122",
 ]
 docs = [
     "zensical>=0.1.3",

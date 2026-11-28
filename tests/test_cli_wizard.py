@@ -77,6 +77,7 @@ def test_ics_to_ics_end_to_end(tmp_path: Path) -> None:
             FIXTURES / "google.ics",
             ICS,
             out,
+            "",  # every date
             "y",  # write to the target
         ),
     )
@@ -106,7 +107,7 @@ def test_stopping_mid_way_is_a_cancel(tmp_path: Path) -> None:
 def test_icloud_password_is_saved_in_the_keychain(
     tmp_path: Path, keychain: dict[tuple[str, str], str], captured: list[Connector]
 ) -> None:
-    result = run(tmp_path, answers(ICLOUD, "me@icloud.com", "", "app-pw", "y", ICS, tmp_path))
+    result = run(tmp_path, answers(ICLOUD, "me@icloud.com", "", "app-pw", "y", ICS, tmp_path, ""))
 
     assert result.exit_code == 2, result.output
     assert "Nothing was written to the target." in result.output
@@ -121,7 +122,7 @@ def test_saved_password_is_reused_and_nextcloud_url_is_built(
     keychain[("caldav", "me@https://cloud.example.com/remote.php/dav")] = "pw"
     result = run(
         tmp_path,
-        answers(NEXTCLOUD, "https://cloud.example.com/", "me", "Work", ICS, tmp_path),
+        answers(NEXTCLOUD, "https://cloud.example.com/", "me", "Work", ICS, tmp_path, ""),
     )
 
     assert "Using the password saved" in result.output, result.output
@@ -150,7 +151,7 @@ def test_unsaved_password_is_used_for_this_run_only(
     result = run(
         tmp_path,
         answers(
-            ICS, FIXTURES / "google.ics", CALDAV, "https://dav.example", "u", "Cal", "s3", save
+            ICS, FIXTURES / "google.ics", CALDAV, "https://dav.example", "u", "Cal", "s3", save, ""
         ),
     )
 
@@ -193,7 +194,7 @@ def test_google_target_signs_in_with_write_access(
     monkeypatch.setattr(gcal, "sign_in", fake_sign_in)
     result = run(
         tmp_path,
-        answers(ICS, FIXTURES / "google.ics", GOOGLE, "typo@gmail.com", secrets, "n", ""),
+        answers(ICS, FIXTURES / "google.ics", GOOGLE, "typo@gmail.com", secrets, "n", "", ""),
     )
 
     assert calls == [(str(secrets), True, False)], result.output
@@ -206,7 +207,7 @@ def test_google_source_reuses_a_write_token(
     tmp_path: Path, keychain: dict[tuple[str, str], str], captured: list[Connector]
 ) -> None:
     keychain[("google", "me@gmail.com:write")] = "token"
-    result = run(tmp_path, answers(GOOGLE, "me@gmail.com", "Work", ICS, tmp_path))
+    result = run(tmp_path, answers(GOOGLE, "me@gmail.com", "Work", ICS, tmp_path, ""))
 
     assert captured[0].config == {"account": "me@gmail.com", "calendar": "Work"}, result.output
 
@@ -223,7 +224,9 @@ def test_google_without_a_client_file_explains(
 def test_other_connector_is_checked(tmp_path: Path, captured: list[Connector]) -> None:
     result = run(
         tmp_path,
-        answers(OTHER, "jsondir:wrong=1", f"jsondir:path={tmp_path},domain=calendar", ICS, "out"),
+        answers(
+            OTHER, "jsondir:wrong=1", f"jsondir:path={tmp_path},domain=calendar", ICS, "out", ""
+        ),
     )
 
     assert "unknown option" in result.output
@@ -243,3 +246,44 @@ def test_one_side_only_is_an_error(tmp_path: Path) -> None:
 
     assert result.exit_code == 2
     assert "Missing --to" in result.output
+
+
+def test_date_range_is_asked_and_repeated(tmp_path: Path) -> None:
+    out = tmp_path / "out"
+    result = run(
+        tmp_path,
+        answers(
+            ICS,
+            FIXTURES / "google.ics",
+            ICS,
+            out,
+            "soon..",  # not a date: asked again
+            "2000-01-01..2099-12-31",
+            "y",
+        ),
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "'soon' is not a date" in result.output
+    assert "Only:  from 2000-01-01" in result.output
+    assert " --since 2000-01-01 --until 2099-12-31" in " ".join(result.output.split())
+
+
+def test_date_range_answers() -> None:
+    def ask(answer: str) -> tuple[str | None, str | None]:
+        with runner.isolation(input=answer + "\n"):
+            return wizard.date_range()
+
+    assert ask("") == (None, None)
+    assert ask("..2024-12-31") == (None, "2024-12-31")
+    assert ask("2025-01-01") == ("2025-01-01", None)
+
+
+def test_command_line_carries_the_selection() -> None:
+    line = wizard.command_line(
+        wizard.Endpoint({"path": "a"}, "ics"),
+        wizard.Endpoint({"path": "b"}, "ics"),
+        since="2025-01-01",
+        calendars=["My Work"],
+    )
+    assert line.endswith("--domain calendar --since 2025-01-01 --calendar 'My Work'")

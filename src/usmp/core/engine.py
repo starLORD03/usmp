@@ -28,6 +28,7 @@ from usmp.core.models import (
     LossReason,
     LossRecord,
     ReportSummary,
+    Selection,
     Severity,
     VerificationReport,
 )
@@ -61,6 +62,10 @@ class Preview:
     """Export losses plus losses predicted from the target's capabilities."""
     bundle: BundleManifest
     bundle_path: Path
+    selection: Selection | None = None
+    """The part of the exported data being migrated; ``None`` means all of it."""
+    left_out: int = 0
+    """Exported items outside the selection: in the backup, but not migrated."""
 
     @property
     def total(self) -> int:
@@ -187,6 +192,22 @@ def _export(source: Connector, domain: str, bundle: BundleWriter) -> _Exported:
             out.items.append(item)
             out.losses.extend(record.losses)
     return out
+
+
+def _choose(
+    domain: str, items: list[Item], losses: list[LossRecord], selection: Selection | None
+) -> tuple[list[Item], list[LossRecord], int]:
+    """The items and losses ``selection`` keeps, and how many items it leaves out."""
+    if selection is None:
+        return items, losses, 0
+    try:
+        kept = domains.select(domain, items, selection)
+    except ValueError as exc:
+        raise MigrationError(str(exc)) from exc
+    chosen = [i for i in items if i.usmp_id in kept]
+    if not chosen:
+        raise MigrationError(f"nothing matches the selection ({selection.describe()})")
+    return chosen, [loss for loss in losses if loss.usmp_id in kept], len(items) - len(chosen)
 
 
 def _differs(a: object, b: object) -> bool:
@@ -320,10 +341,11 @@ def _write_and_verify(
         dry_run=False,
         source=preview.source,
         target=preview.target,
-        summary=ReportSummary.from_results(verified),
+        summary=ReportSummary.from_results(verified, left_out=preview.left_out),
         items=verified,
         losses=all_losses,
         errors=errors,
+        selection=preview.selection,
     )
 
 
@@ -336,8 +358,12 @@ def migrate(
     dry_run: bool = False,
     confirm: Callable[[Preview], bool] = lambda _preview: True,
     progress: Callable[[str], None] = lambda _message: None,
+    selection: Selection | None = None,
 ) -> MigrationResult:
     """Migrate one domain from ``source`` to ``target``.
+
+    Everything the source returns is saved in the backup bundle; with a ``selection`` only the
+    part it keeps is written and verified (spec §8.2).
 
     Raises :class:`MigrationError` if the migration cannot start (incompatible connectors, a
     misbehaving source). Problems during import are recorded in the report instead.
@@ -353,14 +379,17 @@ def migrate(
     if bundle.manifest is None:  # pragma: no cover - close() always sets it
         raise MigrationError("the backup bundle was not written")
 
+    items, losses, left_out = _choose(domain, exported.items, exported.losses, selection)
     preview = Preview(
         domain=domain,
         source=source.info(),
         target=target.info(),
-        counts=dict(Counter(i.type for i in exported.items)),
-        losses=[*exported.losses, *predict_losses(exported.items, target_caps, domain)],
+        counts=dict(Counter(i.type for i in items)),
+        losses=[*losses, *predict_losses(items, target_caps, domain)],
         bundle=bundle.manifest,
         bundle_path=bundle_path,
+        selection=selection,
+        left_out=left_out,
     )
     if dry_run:
         return MigrationResult(preview=preview)
@@ -374,11 +403,10 @@ def migrate(
         target=preview.target,
         target_connector=target.name,
         target_config=target.config,
+        selection=selection,
     )
     with log:
-        report = _write_and_verify(
-            preview, exported.items, target, target_caps, log, {}, progress, started
-        )
+        report = _write_and_verify(preview, items, target, target_caps, log, {}, progress, started)
     return MigrationResult(preview=preview, report=report)
 
 
@@ -389,12 +417,14 @@ def resume(
     dry_run: bool = False,
     confirm: Callable[[Preview], bool] = lambda _preview: True,
     progress: Callable[[str], None] = lambda _message: None,
+    selection: Selection | None = None,
 ) -> MigrationResult:
     """Finish a migration from its backup bundle, without reading the source again.
 
     Items the progress record (or the target itself) shows as already written are not written
     again; everything is still read back and verified. Without a progress record this imports the
-    bundle into ``target``.
+    bundle (or the part ``selection`` keeps) into ``target``. With a record, the run keeps the
+    selection it started with; a different ``selection`` is refused.
     """
     started = datetime.now(UTC)
     try:
@@ -421,6 +451,13 @@ def resume(
                 f"not {target.display_name}"
             )
         domain = header.domain
+        if selection is not None and selection != header.selection:
+            started_with = header.selection.describe() if header.selection else "everything"
+            raise MigrationError(
+                f"this migration was started with a different selection ({started_with}); "
+                "resume it without choosing again"
+            )
+        selection = header.selection
     else:
         known = {}
         domain = choose_domain(
@@ -429,6 +466,7 @@ def resume(
     target_caps = target.capabilities()
     check_plan(manifest.capabilities, target_caps, domain)
     items = [i for i in items if i.domain == domain]
+    items, export_losses, left_out = _choose(domain, items, export_losses, selection)
     preview = Preview(
         domain=domain,
         source=manifest.source,
@@ -437,6 +475,8 @@ def resume(
         losses=[*export_losses, *predict_losses(items, target_caps, domain)],
         bundle=manifest,
         bundle_path=bundle_path,
+        selection=selection,
+        left_out=left_out,
     )
     if dry_run:
         return MigrationResult(preview=preview)
@@ -452,6 +492,7 @@ def resume(
             target=preview.target,
             target_connector=target.name,
             target_config=safe_config(target.config),
+            selection=selection,
         )
     )
     with ProgressLog(bundle_path, header, known) as log:

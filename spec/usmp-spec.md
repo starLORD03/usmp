@@ -177,6 +177,24 @@ twice or change items already on the target.
   summary counts them in `already_present`. Both are informational: they do not change an item's
   status or whether the migration is ok.
 
+### 8.2 Selecting part of the data
+
+A migration MAY move only part of what the source exported, described by a **selection**
+(`Selection` in `verification-report.schema.json`): an optional `since` and `until` instant and an
+optional list of collection names (`collections`; calendars in the calendar domain).
+
+* The bundle still holds everything that was exported. The selection is applied afterwards, so
+  the same backup can later be imported in full or with another selection.
+* Which items a selection keeps is defined by each domain spec (calendar: §8 of
+  [`domains/calendar.md`](domains/calendar.md)). A domain without such rules MUST refuse a
+  selection rather than guess. Domain rules MUST keep related items together (for calendars, a
+  recurring series with all its overridden occurrences) and SHOULD err on the side of keeping an
+  item when its position cannot be determined.
+* Items left out are neither written nor verified, and MUST NOT be reported as `missing`. The
+  report records the `selection` and counts the items it left out in `summary.left_out`, which is
+  not included in `summary.total`. A report with `left_out` above zero MUST carry a `selection`.
+* A resumed migration (§8.1) keeps the selection it started with.
+
 ## 9. Versioning
 
 * The core envelope, manifest and report formats carry their own version fields

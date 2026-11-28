@@ -20,7 +20,7 @@ from typing import IO, Literal, Self
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, ValidationError
 
-from usmp.core.models import ConnectorInfo, LossRecord
+from usmp.core.models import ConnectorInfo, LossRecord, Selection
 from usmp.sdk.connector import WriteResult
 
 PROGRESS_SUFFIX = ".progress.jsonl"
@@ -48,6 +48,8 @@ class ProgressHeader(_Model):
     target: ConnectorInfo
     target_connector: str
     target_config: dict[str, str]
+    selection: Selection | None = None
+    """The part of the backup being migrated; a resumed run keeps it."""
 
 
 class WrittenItem(_Model):
@@ -126,6 +128,7 @@ class ProgressLog:
         target: ConnectorInfo,
         target_connector: str,
         target_config: Mapping[str, str],
+        selection: Selection | None = None,
     ) -> Self:
         header = ProgressHeader(
             started_at=datetime.now(UTC),
@@ -134,6 +137,7 @@ class ProgressLog:
             target=target,
             target_connector=target_connector,
             target_config=safe_config(target_config),
+            selection=selection,
         )
         return cls(bundle_path, header)
 

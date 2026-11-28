@@ -324,6 +324,56 @@ class ItemResult(_Model):
     )
 
 
+class Selection(_Model):
+    """Which part of the exported data a migration moves (spec §8.2).
+
+    Everything is still exported into the backup bundle; items outside the selection are left out
+    of the import and the verification, and counted as ``left_out`` in the report.
+    """
+
+    since: AwareDatetime | None = Field(
+        default=None,
+        description="Keep items that end after this instant. Items without a zone (all-day, "
+        "floating) are compared by wall-clock time in this value's UTC offset.",
+    )
+    until: AwareDatetime | None = Field(
+        default=None,
+        description="Keep items that start before this instant (exclusive). Items without a "
+        "zone are compared by wall-clock time in this value's UTC offset.",
+    )
+    collections: Annotated[list[str], AfterValidator(_sorted_unique)] = Field(
+        default_factory=list,
+        description="Keep only these collections (calendars), by name, ignoring case. Empty "
+        "means all.",
+    )
+
+    @model_validator(mode="after")
+    def _ordered(self) -> Self:
+        if self.since is not None and self.until is not None and self.since >= self.until:
+            raise ValueError("since must be earlier than until")
+        return self
+
+    @property
+    def empty(self) -> bool:
+        return self.since is None and self.until is None and not self.collections
+
+    def describe(self) -> str:
+        """The selection in plain words, e.g. ``from 2025-01-01; calendars: Work``."""
+        parts = []
+        if self.since is not None:
+            parts.append(f"from {_moment(self.since)}")
+        if self.until is not None:
+            parts.append(f"until {_moment(self.until)} (not included)")
+        if self.collections:
+            parts.append("calendars: " + ", ".join(self.collections))
+        return "; ".join(parts) or "everything"
+
+
+def _moment(value: Any) -> str:
+    text: str = value.isoformat(timespec="minutes")
+    return text[:10] if text[11:16] == "00:00" else text
+
+
 class ReportSummary(_Model):
     total: int = Field(ge=0)
     verified: int = Field(ge=0)
@@ -333,9 +383,15 @@ class ReportSummary(_Model):
     already_present: int = Field(
         default=0, ge=0, description="Items found on the target and not written again."
     )
+    left_out: int = Field(
+        default=0,
+        ge=0,
+        description="Exported items outside the selection: kept in the backup, not migrated "
+        "and not counted in `total`.",
+    )
 
     @classmethod
-    def from_results(cls, results: list[ItemResult]) -> Self:
+    def from_results(cls, results: list[ItemResult], *, left_out: int = 0) -> Self:
         def count(status: ItemStatus) -> int:
             return sum(1 for r in results if r.status is status)
 
@@ -346,6 +402,7 @@ class ReportSummary(_Model):
             mismatch=count(ItemStatus.MISMATCH),
             missing=count(ItemStatus.MISSING),
             already_present=sum(1 for r in results if r.already_present),
+            left_out=left_out,
         )
 
 
@@ -367,6 +424,9 @@ class VerificationReport(_Model):
         default_factory=list,
         description="Problems that stopped part of the migration, e.g. a failed write.",
     )
+    selection: Selection | None = Field(
+        default=None, description="The part of the data that was migrated; absent means all."
+    )
 
     @computed_field  # type: ignore[prop-decorator]
     @property
@@ -385,8 +445,10 @@ class VerificationReport(_Model):
 
     @model_validator(mode="after")
     def _summary_matches_items(self) -> Self:
-        if self.summary != ReportSummary.from_results(self.items):
+        if self.summary != ReportSummary.from_results(self.items, left_out=self.summary.left_out):
             raise ValueError("summary does not match items")
+        if self.summary.left_out and self.selection is None:
+            raise ValueError("items can only be left out by a selection")
         if self.finished_at < self.started_at:
             raise ValueError("finished_at is before started_at")
         return self
@@ -404,6 +466,7 @@ __all__ = [
     "LossReason",
     "LossRecord",
     "ReportSummary",
+    "Selection",
     "Severity",
     "SourceRef",
     "ToolInfo",
