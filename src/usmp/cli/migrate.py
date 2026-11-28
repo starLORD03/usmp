@@ -1,5 +1,6 @@
 """``usmp migrate``: move one domain from a source to a target and verify it."""
 
+import contextlib
 import shlex
 import sys
 from collections.abc import Callable
@@ -9,6 +10,14 @@ from typing import Annotated, NoReturn
 
 import typer
 from rich.console import Console
+from rich.progress import (
+    BarColumn,
+    MofNCompleteColumn,
+    Progress,
+    TaskID,
+    TextColumn,
+    TimeRemainingColumn,
+)
 from rich.table import Table
 
 from usmp.cli import wizard
@@ -234,16 +243,18 @@ def command(
             src, dst = (registry.get(e.name)(e.config) for e in endpoints)
         else:
             src, dst = _connector(source, domain), _connector(target, domain)
-        result = migrate(
-            src,
-            dst,
-            domain=domain,
-            bundle_path=bundle_path,
-            dry_run=dry_run,
-            confirm=_confirmer(dry_run=dry_run, yes=yes),
-            progress=_progress,
-            selection=selection,
-        )
+        with contextlib.closing(_WriteBar()) as bar:
+            result = migrate(
+                src,
+                dst,
+                domain=domain,
+                bundle_path=bundle_path,
+                dry_run=dry_run,
+                confirm=_confirmer(dry_run=dry_run, yes=yes),
+                progress=_progress,
+                selection=selection,
+                advance=bar,
+            )
     except (ConnectorError, MigrationError) as exc:
         console.print(f"[red]✗ {exc}[/red]")
         console.print("  Nothing was written to the target.")
@@ -266,6 +277,37 @@ def _selection(since: str | None, until: str | None, calendars: list[str]) -> Se
 
 def _progress(message: str) -> None:
     console.print(f"[dim]{message}[/dim]")
+
+
+class _WriteBar:
+    """A progress bar while items are written. Shown only in a terminal, and gone when done."""
+
+    def __init__(self) -> None:
+        self._bar: Progress | None = None
+        self._task = TaskID(0)
+
+    def __call__(self, done: int, total: int) -> None:
+        if not console.is_terminal or total == 0:
+            return
+        if self._bar is None:
+            self._bar = Progress(
+                TextColumn("  Writing"),
+                BarColumn(),
+                MofNCompleteColumn(),
+                TimeRemainingColumn(),
+                console=console,
+                transient=True,
+            )
+            self._bar.start()
+            self._task = self._bar.add_task("write", total=total)
+        self._bar.update(self._task, completed=done)
+        if done >= total:
+            self.close()
+
+    def close(self) -> None:
+        if self._bar is not None:
+            self._bar.stop()
+            self._bar = None
 
 
 def _confirmer(*, dry_run: bool, yes: bool) -> Callable[[Preview], bool]:
@@ -325,14 +367,16 @@ def _resume(
                 "backup into a target.[/red]"
             )
             raise typer.Exit(EXIT_ERROR)
-        result = resume(
-            dst,
-            bundle_path=bundle_path,
-            dry_run=dry_run,
-            confirm=_confirmer(dry_run=dry_run, yes=yes),
-            progress=_progress,
-            selection=selection,
-        )
+        with contextlib.closing(_WriteBar()) as bar:
+            result = resume(
+                dst,
+                bundle_path=bundle_path,
+                dry_run=dry_run,
+                confirm=_confirmer(dry_run=dry_run, yes=yes),
+                progress=_progress,
+                selection=selection,
+                advance=bar,
+            )
     except (ConnectorError, MigrationError, ProgressError, BundleError) as exc:
         console.print(f"[red]✗ {exc}[/red]")
         console.print("  Nothing more was written to the target.")

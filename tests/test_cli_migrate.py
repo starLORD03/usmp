@@ -327,3 +327,46 @@ def test_bad_selection_is_explained(tmp_path: Path, args: list[str], message: st
     result = runner.invoke(app, ["migrate", "--from", "ics:path=x", "--to", "ics:path=y", *args])
     assert result.exit_code == 2
     assert message in result.output
+
+
+def test_progress_bar_in_a_terminal(
+    tmp_path: Path, source_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import io
+
+    from rich.console import Console
+
+    screen = io.StringIO()
+    monkeypatch.setattr(
+        migrate_cli, "console", Console(file=screen, force_terminal=True, width=100)
+    )
+
+    result = invoke(tmp_path, source_dir, "--yes")
+
+    assert result.exit_code == 0, result.output
+    assert "Writing" in screen.getvalue()
+    assert "4/4" in screen.getvalue()
+
+
+def test_progress_bar_stays_out_of_plain_output() -> None:
+    bar = migrate_cli._WriteBar()
+    bar(0, 10)
+    bar(5, 10)
+    bar.close()
+
+    assert bar._bar is None
+
+
+def test_progress_bar_closes_when_writing_stops(monkeypatch: pytest.MonkeyPatch) -> None:
+    import io
+
+    from rich.console import Console
+
+    monkeypatch.setattr(migrate_cli, "console", Console(file=io.StringIO(), force_terminal=True))
+    bar = migrate_cli._WriteBar()
+    bar(0, 0)
+    assert bar._bar is None, "nothing to write: no bar"
+    bar(1, 10)
+    assert bar._bar is not None
+    bar.close()
+    assert bar._bar is None

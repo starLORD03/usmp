@@ -130,6 +130,7 @@ date range and calendars it started with.
 | "N item(s) were already in the target" | You ran this migration before. Those items were checked, not written again. |
 | `no calendar named 'X'; available: …` | Use one of the names listed with `--calendar` (case doesn't matter). |
 | `nothing matches the selection` | No event falls in that date range or those calendars; widen it. |
+| `… kept failing; try again later` | The service stayed busy or unreachable after several tries over a few minutes. Wait a while, then run the `usmp migrate --resume …` command shown. |
 | "Migration NOT fully verified" | Open the report: it lists each event that didn't match. The backup has the originals. |
 
 Every error before writing ends with "Nothing was written to the target", so it's always safe to

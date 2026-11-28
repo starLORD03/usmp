@@ -14,7 +14,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from tests.connectors.fake_google import FakeGoogle
+from tests.connectors.fake_google import NO_WAIT, FakeGoogle
 from usmp.connectors import gcal
 from usmp.connectors.caldav import CalDavConnector
 from usmp.connectors.gcal import GoogleCalendarConnector
@@ -35,7 +35,7 @@ def google(monkeypatch: pytest.MonkeyPatch) -> Iterator[FakeGoogle]:
     monkeypatch.setattr(
         GoogleCalendarConnector, "session_for", staticmethod(lambda account, write: fake.session)
     )
-    monkeypatch.setattr(gcal.time, "sleep", lambda seconds: None)
+    monkeypatch.setattr(gcal._Api, "policy", NO_WAIT)
     with fake:
         yield fake
 

@@ -17,6 +17,7 @@ import contextlib
 import hashlib
 from collections import defaultdict
 from collections.abc import Iterable, Iterator, Mapping, Sequence
+from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from typing import Any, ClassVar
 from urllib.parse import unquote, urlparse
 
@@ -48,10 +49,17 @@ from usmp.sdk.connector import (
     Writer,
     WriteResult,
 )
+from usmp.sdk.retry import RetryPolicy, TransientError, parse_retry_after, retrying
 
 NAME = "caldav"
 _SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS", "PROPFIND", "REPORT"})
 _MULTIGET_BATCH = 100  # events fetched per calendar-multiget request
+# Requests that are safe to send again: reads, and writes that put the same thing in the same
+# place. New events use a conditional PUT, which the server refuses to apply twice.
+_REPEATABLE = _SAFE_METHODS | {"PUT", "PROPPATCH"}
+_UNCLEAR_STATUS = frozenset({500, 502, 503, 504})
+DEFAULT_WORKERS = 4
+MAX_WORKERS = 16
 
 
 class _UsmpId(ValuedBaseElement):
@@ -78,7 +86,39 @@ def _errors(action: str) -> Iterator[None]:
         raise ConnectorError(f"CalDAV error while {action}: {exc}") from exc
 
 
-class _ReadOnlyClient(DAVClient):
+class _RetryingClient(DAVClient):
+    """A DAV client that retries rate limits, busy servers and dropped connections.
+
+    Any request is retried when the server says it is too busy (429, or 503 with
+    ``Retry-After``): nothing was done. Server errors and dropped connections are only retried for
+    requests that are safe to repeat (:data:`_REPEATABLE`).
+    """
+
+    policy: ClassVar[RetryPolicy | None] = None  # None: the SDK default
+
+    def request(self, url: str, method: str = "GET", *args: Any, **kwargs: Any) -> Any:
+        repeatable = method.upper() in _REPEATABLE
+
+        def attempt() -> Any:
+            try:
+                response = super(_RetryingClient, self).request(url, method, *args, **kwargs)
+            except caldav_error.RateLimitError as exc:
+                raise TransientError(
+                    f"the server is busy (HTTP {exc.status})", retry_after=exc.retry_after_seconds
+                ) from exc
+            except OSError as exc:
+                if not repeatable:
+                    raise
+                raise TransientError(f"connection problem: {exc}") from exc
+            if repeatable and response.status in _UNCLEAR_STATUS:
+                wait = parse_retry_after((response.headers or {}).get("Retry-After"))
+                raise TransientError(f"server error (HTTP {response.status})", retry_after=wait)
+            return response
+
+        return retrying(attempt, what=f"the CalDAV {method} request", policy=self.policy)
+
+
+class _ReadOnlyClient(_RetryingClient):
     """A DAV client that can only read. Used for sources."""
 
     def request(self, url: str, method: str = "GET", *args: Any, **kwargs: Any) -> Any:
@@ -164,9 +204,10 @@ class _CalDavReader(Reader):
 
 
 class _CalDavWriter(Writer):
-    def __init__(self, client: DAVClient, only: str | None) -> None:
+    def __init__(self, client: DAVClient, only: str | None, workers: int = 1) -> None:
         self._client: Any = client  # the caldav library is only partly typed
         self._only = only
+        self._workers = workers
         self._fresh: set[str] = set()  # calendars created by this writer
         self._placed: dict[str, Any] = {}  # calendar usmp_id -> calendar an earlier run made
 
@@ -192,7 +233,7 @@ class _CalDavWriter(Writer):
                 cal.set_properties([_UsmpId(usmp_id)])
         return cal, unique
 
-    def _save(self, cal: Any, uid: str, data: str) -> str:
+    def _save(self, cal: Any, uid: str, data: str, usmp_ids: Sequence[str] = ()) -> str:
         """Store a new resource and return its URL, never replacing an existing event."""
         if str(cal.url) not in self._fresh:
             # An existing calendar: let the library look for the UID first.
@@ -208,10 +249,22 @@ class _CalDavWriter(Writer):
         headers = {"Content-Type": 'text/calendar; charset="utf-8"', "If-None-Match": "*"}
         response = self._client.put(url, data, headers)
         if response.status == 412:
+            if usmp_ids and self._holds(url, usmp_ids):
+                # A retried PUT whose first try was stored but whose answer was lost.
+                return url
             raise ConnectorError(f"event {uid} already exists in the target calendar")
         if response.status >= 400:
             raise ConnectorError(f"the server refused event {uid} (HTTP {response.status})")
         return url
+
+    def _holds(self, url: str, usmp_ids: Sequence[str]) -> bool:
+        """Whether the resource at ``url`` is exactly the events with these ``usmp_ids``."""
+        response = self._client.request(url, "GET")
+        if response.status >= 400:
+            return False
+        vcal = parse_vcalendar(response.raw, url)
+        stored = {usmp_id for usmp_id, _ in marked_events(vcal, _event_native_id(url))}
+        return stored == set(usmp_ids)
 
     def already_written(
         self, items: Sequence[Item], known: Mapping[str, WriteResult]
@@ -312,21 +365,61 @@ class _CalDavWriter(Writer):
             calendars[str(cal.url)] = cal
             groups[(str(cal.url), str(item.payload["uid"]))].append(item)
 
-        for (cal_url, uid), group in groups.items():
-            data = build_vcalendar(
-                [i.payload for i in group], usmp_ids=[i.usmp_id for i in group]
-            ).decode()
-            with _errors(f"saving event {uid}"):
-                saved_url = self._save(calendars[cal_url], uid, data)
-            for item in group:
-                rid = (
-                    recurrence_key(vevent(item.payload))
-                    if "recurrence_id" in item.payload
-                    else None
-                )
-                yield WriteResult(
+        jobs = [(calendars[cal_url], uid, group) for (cal_url, uid), group in groups.items()]
+        # Existing calendars are written one event at a time: the library first checks the UID.
+        for cal, uid, group in jobs:
+            if str(cal.url) not in self._fresh:
+                yield from self._store(cal, uid, group)
+        yield from self._store_parallel([j for j in jobs if str(j[0].url) in self._fresh])
+
+    def _store(self, cal: Any, uid: str, group: Sequence[Item]) -> list[WriteResult]:
+        """Save one CalDAV resource (an event and its moved occurrences)."""
+        usmp_ids = [i.usmp_id for i in group]
+        data = build_vcalendar([i.payload for i in group], usmp_ids=usmp_ids).decode()
+        with _errors(f"saving event {uid}"):
+            saved_url = self._save(cal, uid, data, usmp_ids)
+        results = []
+        for item in group:
+            rid = recurrence_key(vevent(item.payload)) if "recurrence_id" in item.payload else None
+            results.append(
+                WriteResult(
                     item.usmp_id, _event_native_id(saved_url)(uid, rid), _event_losses(item)
                 )
+            )
+        return results
+
+    def _store_parallel(
+        self, jobs: Sequence[tuple[Any, str, Sequence[Item]]]
+    ) -> Iterator[WriteResult]:
+        """Save resources in new calendars with up to ``workers`` requests at a time.
+
+        Each result is yielded once its resource is stored. After a failure no new saves start;
+        saves already under way finish and are reported before the error is raised.
+        """
+        if self._workers <= 1 or len(jobs) < 2:
+            for job in jobs:
+                yield from self._store(*job)
+            return
+        pool = ThreadPoolExecutor(max_workers=self._workers, thread_name_prefix="usmp-caldav")
+        try:
+            futures: list[Future[list[WriteResult]]] = [pool.submit(self._store, *j) for j in jobs]
+            failure: ConnectorError | None = None
+            for future in as_completed(futures):
+                if future.cancelled():  # pragma: no cover - as_completed skips cancelled ones
+                    continue
+                try:
+                    results = future.result()
+                except ConnectorError as exc:
+                    if failure is None:
+                        failure = exc
+                        for other in futures:
+                            other.cancel()
+                    continue
+                yield from results
+            if failure is not None:
+                raise failure
+        finally:
+            pool.shutdown(wait=True, cancel_futures=True)
 
     def _apply_properties(self, cal: Any, item: Item) -> list[LossRecord]:
         losses = []
@@ -405,6 +498,7 @@ class CalDavConnector(Connector):
         "username": "account name, usually your email address",
         "calendar": "only read this calendar / write everything into this calendar",
         "password_env": "environment variable that holds the password (else the OS keychain)",
+        "workers": f"events uploaded at once into new calendars (default {DEFAULT_WORKERS})",
     }
 
     @property
@@ -423,6 +517,14 @@ class CalDavConnector(Connector):
             )
         return password
 
+    def _workers(self) -> int:
+        value = self.config.get("workers", str(DEFAULT_WORKERS)).strip()
+        if not value.isdigit() or not 1 <= int(value) <= MAX_WORKERS:
+            raise ConnectorError(
+                f"{self.display_name}: workers must be a whole number from 1 to {MAX_WORKERS}"
+            )
+        return int(value)
+
     def _client(self, cls: type[DAVClient]) -> DAVClient:
         url = self.require("url")
         if urlparse(url).scheme not in ("http", "https"):
@@ -439,4 +541,5 @@ class CalDavConnector(Connector):
         return _CalDavReader(self._client(_ReadOnlyClient), self.config.get("calendar"))
 
     def open_writer(self) -> Writer:
-        return _CalDavWriter(self._client(DAVClient), self.config.get("calendar"))
+        workers = self._workers()
+        return _CalDavWriter(self._client(_RetryingClient), self.config.get("calendar"), workers)
