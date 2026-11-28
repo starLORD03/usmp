@@ -353,6 +353,40 @@ class TestWriting:
         assert "attendees" not in record.item.payload
         assert "provider_data" not in record.item.payload
 
+    def test_other_meeting_links_and_rooms_come_back_exactly(
+        self, google: FakeGoogle, tmp_path: Path
+    ) -> None:
+        from usmp.connectors.memory import MemoryConnector
+
+        payload = {
+            "uid": "zoom@x",
+            "start": "2026-01-01T09:00:00",
+            "end": "2026-01-01T10:00:00",
+            "time_zone": "UTC",
+            "description": "Agenda",
+            "conferences": [
+                {"uri": "https://zoom.example/j/1", "label": "Zoom", "features": ["video"]},
+                {"uri": "tel:+1-555-0100", "label": "+1 555-0100 PIN: 123", "features": ["phone"]},
+            ],
+            "attendees": [{"email": "room@rooms.example.com", "kind": "room", "name": "Room 1"}],
+        }
+        result = migrate(
+            MemoryConnector({"domain": "calendar"}, items=[event_item("s", "1", payload)]),
+            connector(),
+            bundle_path=tmp_path / "b.usmp",
+        )
+
+        assert result.report is not None and result.report.ok, result.report
+        assert result.report.summary.verified == 1, result.report.losses
+        [stored] = next(e for e in google.events.values() if e).values()
+        assert "https://zoom.example/j/1" in stored["description"], "links readable in Google"
+        [record] = list(connector().open_reader().read("calendar"))[1:]
+        back: dict[str, Any] = dict(record.item.payload)
+        assert back["description"] == "Agenda"
+        assert back["conferences"] == payload["conferences"]
+        assert back["attendees"][0]["kind"] == "room"
+        assert "provider_data" not in back
+
     def test_unsupported_values_are_declared(self, google: FakeGoogle, tmp_path: Path) -> None:
         from usmp.connectors.memory import MemoryConnector
 
@@ -499,11 +533,26 @@ def test_links_google_cannot_attach_go_into_the_notes(google: FakeGoogle, tmp_pa
     )
     assert result.report is not None and result.report.ok, result.report
     [item] = result.report.items
-    assert set(item.declared_loss_fields) == {
-        "attendees", "conferences", "description", "provider_data"
-    }  # fmt: skip
+    assert set(item.declared_loss_fields) == {"attendees", "provider_data"}, "links are kept"
     [stored] = [e for evs in google.events.values() for e in evs.values()]
     assert stored["description"] == "Agenda\n\nJoin online: https://zoom.example/j/1"
+
+
+def test_too_many_links_to_keep_are_declared(google: FakeGoogle, tmp_path: Path) -> None:
+    from usmp.connectors.memory import MemoryConnector
+
+    links = [{"uri": f"https://zoom.example/j/{n:040d}"} for n in range(30)]
+    payload = {"uid": "many@x", "start": "2026-01-01T09:00:00", "time_zone": "UTC",
+               "conferences": links}  # fmt: skip
+    result = migrate(
+        MemoryConnector({"domain": "calendar"}, items=[event_item("s", "1", payload)]),
+        connector(),
+        bundle_path=tmp_path / "b",
+    )
+
+    assert result.report is not None and result.report.ok, result.report
+    [item] = result.report.items
+    assert set(item.declared_loss_fields) == {"conferences", "description"}
 
 
 class TestApi:
@@ -782,3 +831,19 @@ def test_location_written_before_google_added_rooms(
     }  # fmt: skip
     assert gcal._written_location(ev) == expected
     assert gcal._written_location({"location": location}) is None
+
+
+def test_preview_lists_what_writing_will_change(google: FakeGoogle, tmp_path: Path) -> None:
+    from usmp.connectors.memory import MemoryConnector
+
+    payload = {"uid": "g@x", "start": "2026-01-01T09:00:00", "time_zone": "UTC",
+               "attendees": [{"email": "team@x.com", "kind": "group"}]}  # fmt: skip
+    source = MemoryConnector({"domain": "calendar"}, items=[event_item("s", "1", payload)])
+
+    preview = migrate(source, connector(), bundle_path=tmp_path / "a", dry_run=True).preview
+    result = migrate(source, connector(), bundle_path=tmp_path / "b")
+
+    expected = "team@x.com: Google has no group attendees"
+    assert [loss.detail for loss in preview.losses] == [expected]
+    assert result.report is not None
+    assert [loss.detail for loss in result.report.losses] == [expected], "listed once"

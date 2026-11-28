@@ -125,6 +125,13 @@ Implementations MUST reject items of this domain whose payload is invalid or not
   the same person's old address), the writer adds the calendar as an accepted guest and records
   its address in the private extended property `usmp_added_guest`. Readers leave that guest out,
   so the attendee list round-trips unchanged.
+* **What Google changes, kept.** Google adds the names of booked rooms to the location, can only
+  attach meetings it created, and stores rooms as resources. Writers keep the written location
+  (`usmp_location`), the event's `conferences` as compact JSON (`usmp_conferences`, when the join
+  links had to go into the notes) and the room addresses (`usmp_rooms`) as private extended
+  properties, each only if it fits Google's 1,024-character limit (otherwise the change stays a
+  declared loss). Readers restore the location, the conferences (removing exactly the join text
+  added to the notes) and `kind: room`.
 
 ## 8. Selecting events
 

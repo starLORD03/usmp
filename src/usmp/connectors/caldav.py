@@ -149,6 +149,21 @@ def _event_native_id(resource_url: str) -> Any:
     return native_id
 
 
+def _calendar_losses(item: Item, name: str, *, merged: bool) -> list[LossRecord]:
+    """What storing calendar ``item`` as the calendar ``name`` changes."""
+    losses = []
+    if name != item.payload["name"]:
+        losses.append(_CalDavWriter._loss(item, "name", f"stored as {name!r}"))
+    if merged:
+        # Merging never changes the existing calendar's own settings.
+        losses += [
+            _CalDavWriter._loss(item, key, f"merged into the existing calendar {name!r}")
+            for key in ("description", "color", "time_zone")
+            if key in item.payload
+        ]
+    return losses
+
+
 def _event_losses(item: Item) -> tuple[LossRecord, ...]:
     return tuple(
         LossRecord(
@@ -335,19 +350,11 @@ class _CalDavWriter(Writer):
                 continue
             losses: list[LossRecord] = []
             if merged is not None:
-                cal, name = merged, self._only
+                cal, name = merged, str(self._only)
             else:
                 cal, name = self._make(existing, str(item.payload["name"]), item.usmp_id)
-            if name != item.payload["name"]:
-                losses.append(self._loss(item, "name", f"stored as {name!r}"))
-            if merged is not None:
-                # Merging never changes the existing calendar's own settings.
-                losses += [
-                    self._loss(item, key, f"merged into the existing calendar {name!r}")
-                    for key in ("description", "color", "time_zone")
-                    if key in item.payload
-                ]
-            else:
+            losses += _calendar_losses(item, name, merged=merged is not None)
+            if merged is None:
                 losses += self._apply_properties(cal, item)
             by_source[item.usmp_id] = cal
             yield WriteResult(item.usmp_id, str(cal.url), tuple(losses))
@@ -539,6 +546,14 @@ class CalDavConnector(Connector):
 
     def open_reader(self) -> Reader:
         return _CalDavReader(self._client(_ReadOnlyClient), self.config.get("calendar"))
+
+    def expected_losses(self, items: Sequence[Item]) -> Iterator[LossRecord]:
+        only = self.config.get("calendar")
+        for item in items:
+            if item.domain == "calendar" and item.type == "event":
+                yield from _event_losses(item)
+            elif item.domain == "calendar" and item.type == "calendar" and only:
+                yield from _calendar_losses(item, only, merged=True)
 
     def open_writer(self) -> Writer:
         workers = self._workers()

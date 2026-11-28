@@ -298,3 +298,21 @@ def test_merge_mode_leaves_existing_calendar_settings_alone(radicale: tuple[str,
     [home] = [r.item.payload for r in connector(url, user).open_reader().read("calendar")]
     assert home == {"name": "Home", "color": "#111111", "description": "Mine"}
     assert {loss.field for loss in result.losses} == {"name", "color", "description"}
+
+
+def test_preview_lists_merge_into_an_existing_calendar(
+    radicale: tuple[str, Path], tmp_path: Path
+) -> None:
+    from usmp.connectors.memory import MemoryConnector
+
+    url, _ = radicale
+    source = MemoryConnector({"domain": "calendar"}, items=sample())
+    target = connector(url, new_user(), calendar="Everything")
+
+    preview = migrate(source, target, bundle_path=tmp_path / "a", dry_run=True).preview
+    result = migrate(source, target, bundle_path=tmp_path / "b")
+
+    shown = sorted((loss.field, loss.detail) for loss in preview.losses)
+    assert ("name", "stored as 'Everything'") in shown
+    assert result.report is not None and result.report.ok, result.report
+    assert sorted((loss.field, loss.detail) for loss in result.report.losses) == shown
