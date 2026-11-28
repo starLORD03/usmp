@@ -121,6 +121,25 @@ the new calendar, and verifies the lot. Running the whole migration again is als
 that are already there are recognised and never written twice. A resumed migration keeps the
 date range and calendars it started with.
 
+## Protecting the backup
+
+The backup (`.usmp`) is a full copy of your calendar. Only your user account can read it, but
+anyone who gets the file (a lost laptop, a shared folder) can. To lock it with a passphrase, say
+**yes** when the wizard asks "Protect the backup with a passphrase?", or add `--encrypt`:
+
+```console
+$ usmp migrate --from … --to … --encrypt
+  Backup passphrase:
+  Repeat for confirmation:
+```
+
+Keep the passphrase safe: without it the backup cannot be opened, by USMP or anyone else. USMP
+asks for it again when you resume (`--resume`) or inspect the backup (`usmp bundle inspect`). For
+scripts, put it in an environment variable and name it with `--passphrase-env MY_VAR`.
+
+The encrypted backup is a standard [age](https://age-encryption.org) file, so you can always
+recover it without USMP: `age -d usmp-calendar-….usmp > plain.usmp`.
+
 ## If something goes wrong
 
 | You see | What to do |
@@ -132,6 +151,8 @@ date range and calendars it started with.
 | "N item(s) were already in the target" | You ran this migration before. Those items were checked, not written again. |
 | `no calendar named 'X'; available: …` | Use one of the names listed with `--calendar` (case doesn't matter). |
 | `nothing matches the selection` | No event falls in that date range or those calendars; widen it. |
+| `wrong passphrase, or the backup is damaged` | Type the passphrase you chose for this backup. It cannot be recovered if it's lost. |
+| `… would receive your password unencrypted over http://` | Use the server's `https://` address. For a server on your own network without HTTPS, add `allow_http=yes`. |
 | `… kept failing; try again later` | The service stayed busy or unreachable after several tries over a few minutes. Wait a while, then run the `usmp migrate --resume …` command shown. |
 | "Migration NOT fully verified" | Open the report: it lists each event that didn't match. The backup has the originals. |
 

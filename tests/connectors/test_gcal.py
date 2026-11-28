@@ -673,6 +673,25 @@ class TestSignIn:
 
         assert session.credentials.token == "t"  # noqa: S105 - fake token
 
+    def test_refreshed_write_token_stays_filed_as_write(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from google.oauth2.credentials import Credentials
+
+        tokens = {"google:me:write": self.token(datetime.now(UTC) - timedelta(hours=1))}
+        saved: dict[str, str] = {}
+        monkeypatch.setattr(gcal.credentials, "get_secret", lambda c, a, *_: tokens.get(f"{c}:{a}"))
+        monkeypatch.setattr(gcal.credentials, "set_secret", lambda c, a, s: saved.update({a: s}))
+
+        def refresh(creds: Credentials, request: object) -> None:
+            creds.token = "fresh"  # noqa: S105 - fake token
+            creds.expiry = datetime.now(UTC).replace(tzinfo=None) + timedelta(hours=1)
+
+        monkeypatch.setattr(Credentials, "refresh", refresh)
+        gcal.session_factory("me", write=False)()
+
+        assert list(saved) == ["me:write"], "never stored as a read-only sign-in"
+
     def test_expired_token_refreshes_or_explains(self, monkeypatch: pytest.MonkeyPatch) -> None:
         from google.oauth2.credentials import Credentials
 

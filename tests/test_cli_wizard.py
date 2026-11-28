@@ -78,6 +78,7 @@ def test_ics_to_ics_end_to_end(tmp_path: Path) -> None:
             ICS,
             out,
             "",  # every date
+            "",  # no passphrase for the backup
             "y",  # write to the target
         ),
     )
@@ -107,7 +108,9 @@ def test_stopping_mid_way_is_a_cancel(tmp_path: Path) -> None:
 def test_icloud_password_is_saved_in_the_keychain(
     tmp_path: Path, keychain: dict[tuple[str, str], str], captured: list[Connector]
 ) -> None:
-    result = run(tmp_path, answers(ICLOUD, "me@icloud.com", "", "app-pw", "y", ICS, tmp_path, ""))
+    result = run(
+        tmp_path, answers(ICLOUD, "me@icloud.com", "", "app-pw", "y", ICS, tmp_path, "", "")
+    )
 
     assert result.exit_code == 2, result.output
     assert "Nothing was written to the target." in result.output
@@ -122,7 +125,7 @@ def test_saved_password_is_reused_and_nextcloud_url_is_built(
     keychain[("caldav", "me@https://cloud.example.com/remote.php/dav")] = "pw"
     result = run(
         tmp_path,
-        answers(NEXTCLOUD, "https://cloud.example.com/", "me", "Work", ICS, tmp_path, ""),
+        answers(NEXTCLOUD, "https://cloud.example.com/", "me", "Work", ICS, tmp_path, "", ""),
     )
 
     assert "Using the password saved" in result.output, result.output
@@ -151,7 +154,16 @@ def test_unsaved_password_is_used_for_this_run_only(
     result = run(
         tmp_path,
         answers(
-            ICS, FIXTURES / "google.ics", CALDAV, "https://dav.example", "u", "Cal", "s3", save, ""
+            ICS,
+            FIXTURES / "google.ics",
+            CALDAV,
+            "https://dav.example",
+            "u",
+            "Cal",
+            "s3",
+            save,
+            "",
+            "",
         ),
     )
 
@@ -194,7 +206,7 @@ def test_google_target_signs_in_with_write_access(
     monkeypatch.setattr(gcal, "sign_in", fake_sign_in)
     result = run(
         tmp_path,
-        answers(ICS, FIXTURES / "google.ics", GOOGLE, "typo@gmail.com", secrets, "n", "", ""),
+        answers(ICS, FIXTURES / "google.ics", GOOGLE, "typo@gmail.com", secrets, "n", "", "", ""),
     )
 
     assert calls == [(str(secrets), True, False)], result.output
@@ -207,7 +219,7 @@ def test_google_source_reuses_a_write_token(
     tmp_path: Path, keychain: dict[tuple[str, str], str], captured: list[Connector]
 ) -> None:
     keychain[("google", "me@gmail.com:write")] = "token"
-    result = run(tmp_path, answers(GOOGLE, "me@gmail.com", "Work", ICS, tmp_path, ""))
+    result = run(tmp_path, answers(GOOGLE, "me@gmail.com", "Work", ICS, tmp_path, "", ""))
 
     assert captured[0].config == {"account": "me@gmail.com", "calendar": "Work"}, result.output
 
@@ -225,7 +237,7 @@ def test_other_connector_is_checked(tmp_path: Path, captured: list[Connector]) -
     result = run(
         tmp_path,
         answers(
-            OTHER, "jsondir:wrong=1", f"jsondir:path={tmp_path},domain=calendar", ICS, "out", ""
+            OTHER, "jsondir:wrong=1", f"jsondir:path={tmp_path},domain=calendar", ICS, "out", "", ""
         ),
     )
 
@@ -259,6 +271,7 @@ def test_date_range_is_asked_and_repeated(tmp_path: Path) -> None:
             out,
             "soon..",  # not a date: asked again
             "2000-01-01..2099-12-31",
+            "",
             "y",
         ),
     )
@@ -302,3 +315,28 @@ def test_command_line_carries_the_selection() -> None:
 def test_calendar_answer_that_means_the_default(answer: str, chosen: str) -> None:
     with runner.isolation(input=answer + "\n"):
         assert wizard._calendar("target") == chosen
+
+
+def test_backup_passphrase_is_asked_and_never_printed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("usmp.cli.passphrase._interactive", lambda: True)
+    secret = "correct horse battery"  # noqa: S105 - test value
+    result = run(
+        tmp_path,
+        answers(ICS, FIXTURES / "google.ics", ICS, tmp_path / "out", "", "y", secret, secret, "y"),
+    )
+
+    assert result.exit_code == 0, result.output
+    assert secret not in result.output
+    assert "--encrypt" in result.output
+    assert (tmp_path / "b.usmp").read_bytes().startswith(b"age-encryption.org/v1\n")
+
+
+def test_printed_command_is_safe_to_paste() -> None:
+    import shlex
+
+    tricky = wizard.Endpoint({"path": "Bob's calendar'; rm -rf ~; echo '.ics"}, "ics")
+    line = wizard.command_line(tricky, wizard.Endpoint({"path": "out"}, "ics"))
+
+    assert shlex.split(line)[3] == "ics:path=Bob's calendar'; rm -rf ~; echo '.ics"

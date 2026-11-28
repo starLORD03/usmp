@@ -4,8 +4,12 @@ A bundle is a ZIP archive holding a snapshot of exported items. It doubles as a 
 source and as an offline transfer format. Bundles come from users, so the reader treats every
 bundle as untrusted input: entry names, sizes and compression ratios are checked before anything
 is decompressed, and every hash is verified.
+
+A bundle may be encrypted with a passphrase (spec §7.1): the whole ZIP is then wrapped in the age
+format. Readers recognise it by its first bytes and never try to open it without the passphrase.
 """
 
+import io
 import json
 import os
 import re
@@ -19,11 +23,12 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from types import TracebackType
-from typing import Self
+from typing import IO, Self
 
 from pydantic import TypeAdapter, ValidationError
 
 from usmp import __version__
+from usmp.core import encryption
 from usmp.core.hashing import canonical_json, sha256_hex
 from usmp.core.models import (
     BundleManifest,
@@ -49,6 +54,18 @@ MiB = 1024 * 1024
 
 class BundleError(Exception):
     """The bundle is unreadable, unsafe, or not a USMP bundle."""
+
+
+class BundleLockedError(BundleError):
+    """The bundle is encrypted and no passphrase was given."""
+
+
+def is_encrypted(path: Path) -> bool:
+    """True if the bundle at ``path`` is encrypted (spec §7.1)."""
+    try:
+        return encryption.is_encrypted(path)
+    except OSError as exc:
+        raise BundleError(f"{path} is not a readable bundle: {exc}") from exc
 
 
 @dataclass(frozen=True)
@@ -87,8 +104,13 @@ class BundleWriter:
         *,
         source: ConnectorInfo,
         capabilities: CapabilityManifest,
+        passphrase: str | None = None,
     ) -> None:
+        """With a ``passphrase`` the bundle is encrypted (spec §7.1)."""
+        if passphrase is not None:
+            encryption.check_passphrase(passphrase)
         self.path = Path(path)
+        self._passphrase = passphrase
         self._source = source
         self._capabilities = capabilities
         self._items: dict[str, Item] = {}
@@ -131,14 +153,16 @@ class BundleWriter:
             *((RAW_PREFIX + name, self._raw[name]) for name in sorted(self._raw)),
         ]
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        # mkstemp creates the file readable by its owner only; replace() keeps that.
         fd, tmp = tempfile.mkstemp(dir=self.path.parent, prefix=".usmp-", suffix=".tmp")
         try:
-            with os.fdopen(fd, "wb") as fh, zipfile.ZipFile(fh, "w") as zf:
-                for name, data in entries:
-                    info = zipfile.ZipInfo(name, date_time=_ZIP_EPOCH)
-                    info.compress_type = zipfile.ZIP_DEFLATED
-                    info.external_attr = (stat.S_IFREG | 0o600) << 16
-                    zf.writestr(info, data)
+            with os.fdopen(fd, "wb") as fh:
+                if self._passphrase is None:
+                    _write_zip(fh, entries)
+                else:  # the plain ZIP only ever exists in memory
+                    plain = io.BytesIO()
+                    _write_zip(plain, entries)
+                    fh.write(encryption.encrypt(plain.getvalue(), self._passphrase))
             Path(tmp).replace(self.path)
         except BaseException:
             Path(tmp).unlink(missing_ok=True)
@@ -159,17 +183,33 @@ class BundleWriter:
             self.close()
 
 
+def _write_zip(fh: IO[bytes], entries: list[tuple[str, bytes]]) -> None:
+    with zipfile.ZipFile(fh, "w") as zf:
+        for name, data in entries:
+            info = zipfile.ZipInfo(name, date_time=_ZIP_EPOCH)
+            info.compress_type = zipfile.ZIP_DEFLATED
+            info.external_attr = (stat.S_IFREG | 0o600) << 16
+            zf.writestr(info, data)
+
+
 # --- Reader ------------------------------------------------------------------------------------
 
 
 class BundleReader:
     """Open a bundle safely and give access to its contents."""
 
-    def __init__(self, path: Path, *, limits: Limits | None = None) -> None:
+    def __init__(
+        self, path: Path, *, limits: Limits | None = None, passphrase: str | None = None
+    ) -> None:
+        """Open ``path``; an encrypted bundle needs its ``passphrase`` (spec §7.1)."""
         self.path = Path(path)
         self.limits = limits or Limits()
+        self.encrypted = is_encrypted(self.path)
         try:
-            self._zip = zipfile.ZipFile(self.path)
+            if self.encrypted:
+                self._zip = zipfile.ZipFile(io.BytesIO(self._decrypt(passphrase)))
+            else:
+                self._zip = zipfile.ZipFile(self.path)
         except (zipfile.BadZipFile, OSError) as exc:
             raise BundleError(f"{self.path} is not a readable bundle: {exc}") from exc
         try:
@@ -178,6 +218,16 @@ class BundleReader:
         except BaseException:
             self._zip.close()
             raise
+
+    def _decrypt(self, passphrase: str | None) -> bytes:
+        if passphrase is None:
+            raise BundleLockedError(f"{self.path} is encrypted: give its passphrase")
+        if self.path.stat().st_size > self.limits.max_total_bytes:
+            raise BundleError(f"{self.path} is too large to decrypt")
+        try:
+            return encryption.decrypt(self.path.read_bytes(), passphrase)
+        except encryption.DecryptionError as exc:
+            raise BundleError(f"cannot open {self.path}: {exc}") from None
 
     # Structure checks happen before any entry is decompressed.
     def _check_entries(self) -> dict[str, zipfile.ZipInfo]:
@@ -334,7 +384,9 @@ class BundleReader:
 __all__ = [
     "BUNDLE_SUFFIX",
     "BundleError",
+    "BundleLockedError",
     "BundleReader",
     "BundleWriter",
     "Limits",
+    "is_encrypted",
 ]

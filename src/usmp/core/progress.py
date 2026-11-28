@@ -7,7 +7,9 @@ flushed as they are written, so a run stopped at any point (Ctrl+C, a crash, a l
 leaves a usable record. A damaged last line, from a run killed mid-write, is ignored.
 
 Records hold item ids, target ids and loss details, never credentials: target configuration keys
-that look like secrets are left out.
+that look like secrets are left out. When the backup is encrypted the record is *private*: loss
+details, which can name attendees or calendars, are left out too, so the file next to the
+encrypted backup reveals nothing of the calendar's content.
 """
 
 import os
@@ -109,9 +111,15 @@ class ProgressLog:
         bundle_path: Path,
         header: ProgressHeader,
         written: Mapping[str, WriteResult] | None = None,
+        *,
+        private: bool = False,
     ) -> None:
-        """Start the record afresh with ``header`` and the items already ``written``."""
+        """Start the record afresh with ``header`` and the items already ``written``.
+
+        A ``private`` record keeps no loss details (used next to encrypted backups).
+        """
         self.path = progress_path(bundle_path)
+        self._private = private
         flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
         self._fh: IO[str] = os.fdopen(os.open(self.path, flags, 0o600), "w", encoding="utf-8")
         self._line(header.model_dump_json())
@@ -129,6 +137,7 @@ class ProgressLog:
         target_connector: str,
         target_config: Mapping[str, str],
         selection: Selection | None = None,
+        private: bool = False,
     ) -> Self:
         header = ProgressHeader(
             started_at=datetime.now(UTC),
@@ -139,16 +148,18 @@ class ProgressLog:
             target_config=safe_config(target_config),
             selection=selection,
         )
-        return cls(bundle_path, header)
+        return cls(bundle_path, header, private=private)
 
     def _line(self, text: str) -> None:
         self._fh.write(text + "\n")
         self._fh.flush()
 
     def record(self, result: WriteResult) -> None:
-        item = WrittenItem(
-            usmp_id=result.usmp_id, native_id=result.native_id, losses=list(result.losses)
-        )
+        losses = [
+            loss.model_copy(update={"detail": ""}) if self._private else loss
+            for loss in result.losses
+        ]
+        item = WrittenItem(usmp_id=result.usmp_id, native_id=result.native_id, losses=losses)
         self._line(item.model_dump_json())
 
     def close(self) -> None:

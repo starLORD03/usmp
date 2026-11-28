@@ -69,6 +69,8 @@ class Preview:
     """Exported items outside the selection: in the backup, but not migrated."""
     warnings: list[DataWarning] = field(default_factory=list)
     """Odd things in the source data, e.g. events ending before they start (migrated as is)."""
+    encrypted: bool = False
+    """Whether the backup bundle is encrypted with a passphrase."""
 
     @property
     def total(self) -> int:
@@ -353,6 +355,7 @@ def _write_and_verify(
         errors=errors,
         selection=preview.selection,
         warnings=preview.warnings,
+        backup_encrypted=preview.encrypted,
     )
 
 
@@ -367,12 +370,14 @@ def migrate(
     progress: Callable[[str], None] = lambda _message: None,
     selection: Selection | None = None,
     advance: Callable[[int, int], None] = lambda _done, _total: None,
+    passphrase: str | None = None,
 ) -> MigrationResult:
     """Migrate one domain from ``source`` to ``target``.
 
     Everything the source returns is saved in the backup bundle; with a ``selection`` only the
     part it keeps is written and verified (spec §8.2). ``progress`` receives a message at each
-    step and ``advance`` the number of items written so far out of those to write.
+    step and ``advance`` the number of items written so far out of those to write. With a
+    ``passphrase`` the backup is encrypted (spec §7.1) and the progress record kept private.
 
     Raises :class:`MigrationError` if the migration cannot start (incompatible connectors, a
     misbehaving source). Problems during import are recorded in the report instead.
@@ -383,7 +388,13 @@ def migrate(
     check_plan(source_caps, target_caps, domain)
 
     progress(f"Exporting {domain} data from {source.display_name}…")
-    with BundleWriter(bundle_path, source=source.info(), capabilities=source_caps) as bundle:
+    try:
+        writer = BundleWriter(
+            bundle_path, source=source.info(), capabilities=source_caps, passphrase=passphrase
+        )
+    except ValueError as exc:
+        raise MigrationError(str(exc)) from exc
+    with writer as bundle:
         exported = _export(source, domain, bundle)
     if bundle.manifest is None:  # pragma: no cover - close() always sets it
         raise MigrationError("the backup bundle was not written")
@@ -400,6 +411,7 @@ def migrate(
         selection=selection,
         left_out=left_out,
         warnings=domains.warnings(domain, items),
+        encrypted=passphrase is not None,
     )
     if dry_run:
         return MigrationResult(preview=preview)
@@ -414,6 +426,7 @@ def migrate(
         target_connector=target.name,
         target_config=target.config,
         selection=selection,
+        private=passphrase is not None,
     )
     with log:
         report = _write_and_verify(
@@ -431,8 +444,11 @@ def resume(
     progress: Callable[[str], None] = lambda _message: None,
     selection: Selection | None = None,
     advance: Callable[[int, int], None] = lambda _done, _total: None,
+    passphrase: str | None = None,
 ) -> MigrationResult:
     """Finish a migration from its backup bundle, without reading the source again.
+
+    An encrypted backup needs its ``passphrase``; the progress record then stays private.
 
     Items the progress record (or the target itself) shows as already written are not written
     again; everything is still read back and verified. Without a progress record this imports the
@@ -442,7 +458,8 @@ def resume(
     started = datetime.now(UTC)
     try:
         record = read_progress(bundle_path)
-        with BundleReader(bundle_path) as bundle:
+        with BundleReader(bundle_path, passphrase=passphrase) as bundle:
+            encrypted = bundle.encrypted
             problems = bundle.validate()
             if problems:
                 raise MigrationError(f"the backup {bundle_path} is damaged: {problems[0]}")
@@ -491,6 +508,7 @@ def resume(
         selection=selection,
         left_out=left_out,
         warnings=domains.warnings(domain, items),
+        encrypted=encrypted,
     )
     if dry_run:
         return MigrationResult(preview=preview)
@@ -509,7 +527,7 @@ def resume(
             selection=selection,
         )
     )
-    with ProgressLog(bundle_path, header, known) as log:
+    with ProgressLog(bundle_path, header, known, private=encrypted) as log:
         report = _write_and_verify(
             preview, items, target, target_caps, log, known, progress, started, advance
         )

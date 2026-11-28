@@ -24,7 +24,9 @@ Source ──read only──► canonical data ──► .usmp bundle (backup + 
 - **Your source is never modified.** Connectors can only read from the source.
 - **Nothing is lost silently.** Fields the target can't hold are listed *before* you migrate.
   Afterwards, USMP reads everything back and verifies it.
-- **Local-first.** Runs on your machine. Your data and credentials stay with you.
+- **Local-first.** Runs on your machine. Your data and credentials stay with you. Passwords live in
+  your OS keychain; the backup can be encrypted with a passphrase (`--encrypt`). See the
+  [threat model](docs/security/threat-model.md).
 
 Read the [architecture overview](docs/architecture/overview.md) for details.
 

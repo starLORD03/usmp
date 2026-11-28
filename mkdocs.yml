@@ -41,6 +41,7 @@ nav:
       - guides/caldav.md
       - guides/google.md
       - guides/writing-a-connector.md
+  - Security: security/threat-model.md
   - Roadmap: plan/ROADMAP.md
   - Decisions (ADRs):
       - adr/0001-open-protocol-first.md
@@ -49,6 +50,7 @@ nav:
       - adr/0004-canonical-model-and-bundle.md
       - adr/0005-calendar-first-vertical.md
       - adr/0006-development-workflow.md
+      - adr/0007-encrypted-backups-with-age.md
   - Contributing: https://github.com/starLORD03/usmp/blob/main/CONTRIBUTING.md
   - v2 vision (archived): vision/v2/README.md
 

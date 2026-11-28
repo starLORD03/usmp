@@ -128,8 +128,29 @@ A bundle is a ZIP archive with exactly these entries:
 `manifest.items_sha256` is the hash of the exact bytes of `items.jsonl`. Readers MUST verify it and
 every item's `content_hash`, and MUST reject entries with absolute paths, `..` segments, or names
 outside the table above. Readers SHOULD enforce limits on entry sizes and compression ratios.
-Bundles contain personal data: tools SHOULD store them only where the user chooses and MUST NOT
-write credentials into them.
+Bundles contain personal data: tools SHOULD store them only where the user chooses, readable by
+the user only, and MUST NOT write credentials into them.
+
+### 7.1 Encrypted bundles
+
+A bundle MAY be encrypted with a passphrase. An encrypted bundle is a complete plain bundle (the
+ZIP above, unchanged) encrypted as one [age v1](https://age-encryption.org/v1) file with a
+single passphrase (`scrypt`) recipient. Encryption wraps the bundle; it does not change the plain
+format, so existing readers keep working on plain bundles, and anyone with the passphrase can turn
+an encrypted bundle back into a plain one with any age implementation (`age -d`).
+
+* **Identification.** A reader MUST decide by the first bytes: `age-encryption.org/v1\n` means
+  encrypted, a ZIP signature means plain. It MUST NOT infer encryption from the file name, and
+  MUST NOT try to open an encrypted bundle without a passphrase supplied by the user (no empty or
+  default passphrases, no guessing). A wrong passphrase or damaged file MUST be reported as such;
+  nothing from it may be used.
+* **After decryption** every rule of §7 applies to the plain bundle as usual.
+* **Writers** MUST NOT write the plain bundle to disk while producing the encrypted one, and MUST
+  NOT store, log or report the passphrase. They SHOULD refuse passphrases shorter than 8
+  characters.
+* **Side files.** A progress record (§8.1) kept next to an encrypted bundle MUST NOT contain item
+  content; loss `detail` texts, which can name people or calendars, are left out of it. Reports
+  SHOULD say whether the backup is encrypted (`backup_encrypted`).
 
 ## 8. Migration and verification
 
