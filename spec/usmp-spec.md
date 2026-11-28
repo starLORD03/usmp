@@ -160,6 +160,23 @@ A migration is **ok** only if no item is `mismatch` or `missing` and the report 
 (problems that stopped part of the migration, such as a failed write). Tools SHOULD exit with a non-zero
 status otherwise.
 
+### 8.1 Re-runs and resume
+
+Running the same migration again, or finishing one that stopped part-way, MUST NOT write any item
+twice or change items already on the target.
+
+* Writers SHOULD store each written item's `usmp_id` on the target, in a place that is not part of
+  the item's canonical payload (for iCalendar, the `X-USMP-ID` property; see the domain specs).
+  Before importing, a writer reports the items it finds there as **already present**; only the
+  rest are written. Already-present items are still read back and verified like any other, so a
+  copy someone edited on the target since is reported as `mismatch`, never overwritten.
+* Tools MAY keep a progress record of written items next to the bundle, and MAY resume a
+  migration from the bundle alone, without reading the source again. A progress record MUST NOT
+  contain credentials. It is not part of the bundle (§7), which stays an unchanged snapshot.
+* Report items carry `already_present: true` when they were not written by this run, and the
+  summary counts them in `already_present`. Both are informational: they do not change an item's
+  status or whether the migration is ok.
+
 ## 9. Versioning
 
 * The core envelope, manifest and report formats carry their own version fields

@@ -20,9 +20,12 @@ import icalendar
 
 from usmp.connectors._ical import (
     HEX_COLOR,
+    USMP_ID,
+    USMP_ID_PATTERN,
     build_vcalendar,
     calendar_capabilities,
     event_records,
+    marked_events,
     parse_vcalendar,
     recurrence_key,
     resolve_zone,
@@ -64,7 +67,7 @@ def _calendar_payload(cal: icalendar.Calendar, path: Path) -> tuple[dict[str, An
     if zone:
         payload["time_zone"] = zone
     known = {"X-WR-CALNAME", "NAME", "X-WR-CALDESC", "DESCRIPTION", "COLOR",
-             "X-APPLE-CALENDAR-COLOR", "X-WR-TIMEZONE"}  # fmt: skip
+             "X-APPLE-CALENDAR-COLOR", "X-WR-TIMEZONE", USMP_ID}  # fmt: skip
     unknown = sorted(set(cal) - known - _CALENDAR_IGNORED)
     return payload, unknown
 
@@ -137,13 +140,29 @@ def _slug(name: str) -> str:
 class _PendingFile:
     path: Path
     calendar: Mapping[str, Any]
+    usmp_id: str | None = None
     events: list[Mapping[str, Any]] = field(default_factory=list)
+    event_ids: list[str] = field(default_factory=list)
+
+
+def _event_native_id(file_name: str, payload: Mapping[str, Any]) -> str:
+    rid = payload.get("recurrence_id")
+    return f"{file_name}#{payload['uid']}" + (f"#{recurrence_key(vevent(payload))}" if rid else "")
+
+
+def _event_losses(item: Item) -> tuple[LossRecord, ...]:
+    return tuple(
+        LossRecord(usmp_id=item.usmp_id, field=f, reason=LossReason.VALUE_CONVERTED,
+                   stage="import", detail="iCalendar cannot store this value exactly")
+        for f in unstorable_fields(item.payload)
+    )  # fmt: skip
 
 
 class _IcsWriter(Writer):
     def __init__(self, path: Path) -> None:
         self._path = path
         self._single = path.suffix.lower() == ".ics"
+        self._present: dict[str, Path] = {}  # calendars an earlier run wrote
 
     def _new_file(self, files: dict[str, _PendingFile], name: str) -> Path:
         if self._single:
@@ -164,8 +183,39 @@ class _IcsWriter(Writer):
             raise ConnectorError(f"refusing to overwrite existing file {target}")
         return target
 
+    def _existing_files(self) -> list[Path]:
+        if self._single:
+            return [self._path] if self._path.is_file() else []
+        if not self._path.is_dir():
+            return []
+        return sorted(p for p in self._path.iterdir() if p.suffix.lower() == ".ics" and p.is_file())
+
+    def already_written(
+        self, items: Sequence[Item], known: Mapping[str, WriteResult]
+    ) -> Iterator[WriteResult]:
+        # Files are written whole at the end, so the files themselves are the only truth.
+        files: dict[str, Path] = {}  # calendar usmp_id -> file
+        events: dict[str, str] = {}  # event usmp_id -> native id
+        for path in self._existing_files():
+            cal = _parse(path)
+            marker = str(cal.get(USMP_ID) or "")
+            if USMP_ID_PATTERN.fullmatch(marker):
+                files[marker] = path
+
+            def native_id(uid: str, rid: str | None, name: str = path.name) -> str:
+                return f"{name}#{uid}" + (f"#{rid}" if rid else "")
+
+            events.update(marked_events(cal, native_id))
+        for item in items:
+            if item.type == "calendar" and item.usmp_id in files:
+                self._present[item.usmp_id] = files[item.usmp_id]
+                yield WriteResult(usmp_id=item.usmp_id, native_id=files[item.usmp_id].name)
+            elif item.type == "event" and item.usmp_id in events:
+                yield WriteResult(item.usmp_id, events[item.usmp_id], _event_losses(item))
+
     def write(self, items: Iterable[Item]) -> Iterator[WriteResult]:
         files: dict[str, _PendingFile] = {}  # calendar usmp_id -> file
+        results: list[WriteResult] = []
         native_ids: set[str] = set()
         default_key = "__default__"
         for item in items:
@@ -173,32 +223,32 @@ class _IcsWriter(Writer):
                 raise ConnectorError(f"cannot write {item.domain}/{item.type} items to iCalendar")
             if item.type == "calendar":
                 path = self._new_file(files, str(item.payload["name"]))
-                files[item.usmp_id] = _PendingFile(path, item.payload)
-                yield WriteResult(usmp_id=item.usmp_id, native_id=path.name)
+                files[item.usmp_id] = _PendingFile(path, item.payload, item.usmp_id)
+                results.append(WriteResult(usmp_id=item.usmp_id, native_id=path.name))
                 continue
+            if item.parent in self._present:
+                raise ConnectorError(
+                    f"{self._present[item.parent]} already holds this calendar from an earlier "
+                    f"run; refusing to overwrite it to add event {item.payload['uid']}"
+                )
             key = item.parent if item.parent in files else default_key
             if key not in files:
                 path = self._new_file(files, "imported")
                 files[key] = _PendingFile(path, {"name": "Imported"})
             pending = files[key]
-            rid = item.payload.get("recurrence_id")
-            native_id = f"{pending.path.name}#{item.payload['uid']}" + (
-                f"#{recurrence_key(vevent(item.payload))}" if rid else ""
-            )
+            native_id = _event_native_id(pending.path.name, item.payload)
             if native_id in native_ids:
                 raise ConnectorError(f"event {item.payload['uid']} appears more than once")
             native_ids.add(native_id)
             pending.events.append(item.payload)
-            losses = tuple(
-                LossRecord(usmp_id=item.usmp_id, field=f, reason=LossReason.VALUE_CONVERTED,
-                           stage="import", detail="iCalendar cannot store this value exactly")
-                for f in unstorable_fields(item.payload)
-            )  # fmt: skip
-            yield WriteResult(usmp_id=item.usmp_id, native_id=native_id, losses=losses)
+            pending.event_ids.append(item.usmp_id)
+            results.append(WriteResult(item.usmp_id, native_id, _event_losses(item)))
         if not self._single:
             self._path.mkdir(parents=True, exist_ok=True)
         for pending in files.values():
             _write_file(pending)
+        # Only report items once their file is safely on disk.
+        yield from results
 
     def read_back(self, domain: str, native_ids: Sequence[str]) -> Iterator[Item]:
         wanted = set(native_ids)
@@ -215,11 +265,13 @@ class _IcsWriter(Writer):
 def _write_file(pending: _PendingFile) -> None:
     meta = pending.calendar
     props = {"x-wr-calname": meta["name"]}
+    if pending.usmp_id:
+        props[USMP_ID.lower()] = pending.usmp_id
     for key, prop in (("description", "x-wr-caldesc"), ("color", "color"),
                       ("time_zone", "x-wr-timezone")):  # fmt: skip
         if meta.get(key):
             props[prop] = meta[key]
-    data = build_vcalendar(pending.events, props)
+    data = build_vcalendar(pending.events, props, usmp_ids=pending.event_ids)
     pending.path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=pending.path.parent, prefix=".tmp-", suffix=".ics")
     try:

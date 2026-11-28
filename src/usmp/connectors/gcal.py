@@ -89,6 +89,7 @@ _RESTORABLE = frozenset(
     }
 )  # fmt: skip
 _CONF = {"conferenceDataVersion": 1}  # keep conferenceData when writing
+_USMP_KEY = "usmp_id"  # extendedProperties.private key marking events USMP wrote
 _ENTRY_FEATURES = {"video": ["video"], "phone": ["phone"], "sip": ["audio"]}
 
 
@@ -286,10 +287,32 @@ class _EventConverter:
         ]  # fmt: skip
         payload["conferences"] = _conferences(ev)
         google = {k: v for k, v in ev.items() if k not in _MAPPED}
+        _drop_marker(google)
         if google.get("eventType") == "default":
             del google["eventType"]
         payload["provider_data"] = {"google": google}
         return payload
+
+
+def _marker(ev: Mapping[str, Any]) -> str | None:
+    """The ``usmp_id`` a USMP run stored on this event, if any."""
+    value = ((ev.get("extendedProperties") or {}).get("private") or {}).get(_USMP_KEY)
+    return str(value) if value else None
+
+
+def _drop_marker(google: dict[str, Any]) -> None:
+    """Remove USMP's own marker: it identifies the event and is not part of it."""
+    props = google.get("extendedProperties")
+    if not isinstance(props, dict) or _USMP_KEY not in (props.get("private") or {}):
+        return
+    private = {k: v for k, v in props["private"].items() if k != _USMP_KEY}
+    props = {k: v for k, v in props.items() if k != "private"} | (
+        {"private": private} if private else {}
+    )
+    if props:
+        google["extendedProperties"] = props
+    else:
+        del google["extendedProperties"]
 
 
 def _conferences(ev: Mapping[str, Any]) -> list[dict[str, Any]]:
@@ -546,6 +569,8 @@ class _GoogleWriter(Writer):
     def __init__(self, api: _Api, only: str | None) -> None:
         self._api = api
         self._only = only
+        self._placed: dict[str, str] = {}  # calendar usmp_id -> calendar an earlier run made
+        self._masters: dict[tuple[str, str], str] = {}  # (calendar, uid) -> series event id
 
     def _calendar_ids(self) -> dict[str, str]:
         return {
@@ -577,11 +602,53 @@ class _GoogleWriter(Writer):
         existing[unique] = cal_id
         return cal_id, unique
 
+    def already_written(
+        self, items: Sequence[Item], known: Mapping[str, WriteResult]
+    ) -> Iterator[WriteResult]:
+        entries = {e["id"]: e for e in self._api.pages("/users/me/calendarList", {})}
+        events: dict[str, tuple[str, str]] = {}  # event usmp_id -> (calendar, native id)
+        for cal_id, entry in sorted(entries.items()):
+            if entry.get("accessRole") not in ("owner", "writer"):
+                continue
+            params = {"singleEvents": "false", "showDeleted": "false", "maxResults": 2500}
+            for ev in self._api.pages(f"/calendars/{quote(cal_id, safe='')}/events", params):
+                marker = _marker(ev)
+                if marker and ev.get("status") != "cancelled":
+                    events[marker] = (cal_id, f"{cal_id}/{ev['id']}")
+                    if "recurringEventId" not in ev:
+                        self._masters[(cal_id, str(ev.get("iCalUID")))] = str(ev["id"])
+        holding: dict[str, str] = {}
+        for item in items:
+            if item.type == "event" and item.usmp_id in events and item.parent:
+                holding.setdefault(item.parent, events[item.usmp_id][0])
+        for item in items:
+            if item.type == "calendar" and self._only is None:
+                earlier = known.get(item.usmp_id)
+                cal_id = (
+                    earlier.native_id if earlier and earlier.native_id in entries else None
+                ) or holding.get(item.usmp_id)
+                if cal_id is None:
+                    continue
+                self._placed[item.usmp_id] = cal_id
+                if earlier:
+                    losses = list(earlier.losses)
+                else:
+                    name = _calendar_payload(entries[cal_id])["name"]
+                    losses = (
+                        [_import_loss(item, "name", f"stored as {name!r}", Severity.INFO)]
+                        if name != item.payload["name"]
+                        else []
+                    )
+                yield WriteResult(item.usmp_id, cal_id, tuple(losses))
+            elif item.type == "event" and item.usmp_id in events:
+                _, changed = _google_event(item.payload)
+                losses = [_import_loss(item, f, d) for f, d in changed]
+                yield WriteResult(item.usmp_id, events[item.usmp_id][1], tuple(losses))
+
     def write(self, items: Iterable[Item]) -> Iterator[WriteResult]:
         items = list(items)
         existing = self._calendar_ids()
-        by_source: dict[str, str] = {}
-        results: dict[str, WriteResult] = {}
+        by_source: dict[str, str] = dict(self._placed)
         merged: str | None = None
         if self._only:
             merged = (
@@ -609,9 +676,9 @@ class _GoogleWriter(Writer):
                     if key in item.payload
                 ]
             by_source[item.usmp_id] = cal_id
-            results[item.usmp_id] = WriteResult(item.usmp_id, cal_id, tuple(losses))
+            yield WriteResult(item.usmp_id, cal_id, tuple(losses))
 
-        masters: dict[tuple[str, str], str] = {}
+        masters = self._masters
         ordered = sorted(
             (i for i in items if i.type == "event"), key=lambda i: "recurrence_id" in i.payload
         )
@@ -621,6 +688,11 @@ class _GoogleWriter(Writer):
                 found = merged = self._create_calendar(existing, {"name": "Imported"})[0]
             cal_id = found
             body, changed = _google_event(item.payload)
+            private = body.setdefault("extendedProperties", {}).setdefault("private", {})
+            body["extendedProperties"] = {
+                **body["extendedProperties"],
+                "private": {**private, _USMP_KEY: item.usmp_id},
+            }
             path_cal = quote(cal_id, safe="")
             if "recurrence_id" in item.payload:
                 master = masters.get((cal_id, str(item.payload["uid"])))
@@ -643,11 +715,7 @@ class _GoogleWriter(Writer):
                 )
                 masters[(cal_id, str(item.payload["uid"]))] = str(saved["id"])
             losses = [_import_loss(item, f, d) for f, d in changed]
-            results[item.usmp_id] = WriteResult(
-                item.usmp_id, f"{cal_id}/{saved['id']}", tuple(losses)
-            )
-        for item in items:
-            yield results[item.usmp_id]
+            yield WriteResult(item.usmp_id, f"{cal_id}/{saved['id']}", tuple(losses))
 
     def read_back(self, domain: str, native_ids: Sequence[str]) -> Iterator[Item]:
         entries = {e["id"]: e for e in self._api.pages("/users/me/calendarList", {})}

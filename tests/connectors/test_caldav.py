@@ -65,6 +65,7 @@ def sample() -> list[Item]:
 
 
 class TestCalDavConformance(ConnectorConformance):
+    finds_written = True
     domain = "calendar"
 
     @pytest.fixture(autouse=True)
@@ -174,7 +175,7 @@ def test_new_calendar_saves_never_replace(radicale: tuple[str, Path]) -> None:
         writer._save(cal, "other@x", "not iCalendar")
 
 
-def test_merge_into_one_named_calendar_and_no_overwrite(
+def test_merge_into_one_named_calendar_and_rerun_writes_nothing(
     radicale: tuple[str, Path], tmp_path: Path
 ) -> None:
     url, _ = radicale
@@ -189,8 +190,10 @@ def test_merge_into_one_named_calendar_and_no_overwrite(
         r for r in connector(url, user).open_reader().read("calendar") if r.item.type == "calendar"
     ]
     assert [c.item.payload["name"] for c in calendars] == ["Everything"]
-    assert again.report is not None and not again.report.ok
-    assert any("already exists" in e for e in again.report.errors)
+    assert again.report is not None and again.report.ok, again.report
+    events = [r for r in again.report.items if r.type == "event"]
+    assert events and all(r.already_present for r in events)
+    assert again.report.summary.already_present == len(events)
 
 
 def test_read_one_calendar_by_name(radicale: tuple[str, Path]) -> None:

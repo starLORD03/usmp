@@ -28,6 +28,7 @@ client_secret*.json
 
 # USMP runtime artefacts — may contain personal data
 *.usmp
+*.usmp.progress.jsonl
 usmp-reports/
 
 # Editors / OS

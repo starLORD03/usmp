@@ -1,5 +1,5 @@
 import hashlib
-from collections.abc import Iterable, Iterator, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -16,6 +16,7 @@ from usmp.testing import (
     check_capabilities,
     check_read,
     check_reader_is_read_only,
+    check_rerun,
     check_round_trip,
 )
 
@@ -45,6 +46,7 @@ def demo_items() -> list[Item]:
 
 
 class TestMemoryConformance(ConnectorConformance):
+    finds_written = True
     domain = "demo"
 
     def make_connector(self) -> MemoryConnector:
@@ -59,6 +61,7 @@ class TestMemoryConformance(ConnectorConformance):
 
 
 class TestJsonDirConformance(ConnectorConformance):
+    finds_written = True
     domain = "demo"
 
     @pytest.fixture(autouse=True)
@@ -295,3 +298,48 @@ class TestRoundTripCheck:
         back = [mem(todo[0], native_id="n0")]
         with pytest.raises(ConformanceError, match="does not declare"):
             check_round_trip(broken(writer=self.writer(back=back)), todo, "demo")
+
+    def test_results_may_come_in_any_order(self) -> None:
+        two = [make_event("1", title="T"), make_event("2", title="T")]
+        results = [WriteResult(two[1].usmp_id, "n1"), WriteResult(two[0].usmp_id, "n0")]
+        back = [mem(two[0], native_id="n0"), mem(two[1], native_id="n1")]
+        writer = self.writer(results=results, back=back)
+        assert len(check_round_trip(broken(writer=writer), two, "demo")) == 2
+
+
+class TestRerunCheck:
+    items: ClassVar[list[Item]] = [make_event("1", title="T")]
+
+    def writer(self, *, found: str | None, writes_again: bool = False) -> Writer:
+        class W(Writer):
+            def already_written(
+                self, items: Sequence[Item], known: Mapping[str, WriteResult]
+            ) -> Iterator[WriteResult]:
+                if found is not None:
+                    yield from (WriteResult(i.usmp_id, found) for i in items)
+
+            def write(self, items: Iterable[Item]) -> Iterator[WriteResult]:
+                items = list(items)
+                yield from (WriteResult(i.usmp_id, "n0") for i in items)
+                if writes_again and not items:
+                    yield WriteResult(TestRerunCheck.items[0].usmp_id, "n9")
+
+            def read_back(self, domain: str, native_ids: Sequence[str]) -> Iterator[Item]:
+                yield from ()
+
+        return W()
+
+    def test_passes_when_items_are_found(self) -> None:
+        check_rerun(broken(writer=self.writer(found="n0")), self.items)
+
+    def test_default_writer_finds_nothing(self) -> None:
+        with pytest.raises(ConformanceError, match="did not find"):
+            check_rerun(broken(writer=self.writer(found=None)), self.items)
+
+    def test_found_under_another_id(self) -> None:
+        with pytest.raises(ConformanceError, match="different native ids"):
+            check_rerun(broken(writer=self.writer(found="elsewhere")), self.items)
+
+    def test_empty_write_must_write_nothing(self) -> None:
+        with pytest.raises(ConformanceError, match="write nothing"):
+            check_rerun(broken(writer=self.writer(found="n0", writes_again=True)), self.items)

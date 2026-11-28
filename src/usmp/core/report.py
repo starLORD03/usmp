@@ -13,6 +13,11 @@ STATUS_LABELS = {
     ItemStatus.MISSING: "Missing",
 }
 
+ALREADY_PRESENT = (
+    "item(s) were already in the target from an earlier run, so they were not written again "
+    "(they are still counted and verified above)."
+)
+
 REASON_LABELS = {
     "unsupported_by_canonical": "USMP has no place for it yet (kept in the backup)",
     "unsupported_by_target": "the target cannot store it",
@@ -64,6 +69,8 @@ def to_markdown(report: VerificationReport) -> str:
         f"| {STATUS_LABELS[ItemStatus.MISSING]} | {s.missing} |",
         f"| **Total** | **{s.total}** |",
     ]
+    if s.already_present:
+        lines += ["", f"{s.already_present} {ALREADY_PRESENT}"]
     if report.errors:
         lines += ["", "## Errors", "", *(f"- {e}" for e in report.errors)]
     problems = [i for i in report.items if i.status in (ItemStatus.MISMATCH, ItemStatus.MISSING)]
@@ -146,6 +153,8 @@ def to_html(report: VerificationReport) -> str:
         row("<strong>Total</strong>", f"<strong>{s.total}</strong>", num=1),
         "</table>",
     ]
+    if s.already_present:
+        parts.append(f"<p>{s.already_present} {e(ALREADY_PRESENT)}</p>")
     if report.errors:
         parts.append("<h2>Errors</h2><ul>")
         parts += [f"<li class='bad'>{e(err)}</li>" for err in report.errors]

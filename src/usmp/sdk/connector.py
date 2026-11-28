@@ -74,9 +74,29 @@ class Reader(_Closeable, ABC):
 class Writer(_Closeable, ABC):
     """Write access to a target, plus read-back for verification."""
 
+    def already_written(
+        self, items: Sequence[Item], known: Mapping[str, WriteResult]
+    ) -> Iterator[WriteResult]:
+        """Yield a result for each of ``items`` that is already on the target.
+
+        Called before :meth:`write`, which then only receives the remaining items. ``known`` holds
+        what an interrupted run recorded as written, keyed by ``usmp_id``. Writers that store
+        ``usmp_id`` on the target should override this to look items up there, so that re-runs
+        without a progress record are safe too, and should remember where already-present
+        parents are so that :meth:`write` can put new children under them. The default trusts
+        ``known``: read-back verification still checks that those items exist.
+        """
+        for item in items:
+            if item.usmp_id in known:
+                yield known[item.usmp_id]
+
     @abstractmethod
     def write(self, items: Iterable[Item]) -> Iterator[WriteResult]:
-        """Write ``items`` in order and yield one result per item written."""
+        """Write ``items`` and yield one result per item, as soon as that item is stored.
+
+        Results may come in any order. Yielding only after an item is stored lets an
+        interrupted migration resume without writing it twice.
+        """
 
     @abstractmethod
     def read_back(self, domain: str, native_ids: Sequence[str]) -> Iterator[Item]:

@@ -82,6 +82,19 @@ $ usmp migrate --from 'google:account=you@gmail.com' \
 
 Add `--dry-run` to preview only, or `--yes` to skip the confirmation (for scripts).
 
+## If it stops halfway
+
+A lost connection, a closed laptop or Ctrl+C can stop a migration while it is writing. Nothing
+written so far is lost, and USMP prints the command that finishes the job:
+
+```console
+$ usmp migrate --resume usmp-calendar-20261128-101500.usmp
+```
+
+It continues from the backup (your old calendar is not read again), skips everything already in
+the new calendar, and verifies the lot. Running the whole migration again is also safe: events
+that are already there are recognised and never written twice.
+
 ## If something goes wrong
 
 | You see | What to do |
@@ -89,7 +102,8 @@ Add `--dry-run` to preview only, or `--yes` to skip the confirmation (for script
 | `sign-in failed … app-specific password` | Use an app password, not your normal password. |
 | `Google sign-in expired or was revoked` | Run `usmp auth google --client-secrets client_secret.json` again. |
 | `Error 403: access_denied` in the browser | Add your Google account as a test user of your OAuth client. |
-| `event … already exists in the target calendar` | You already migrated into that calendar. Nothing was overwritten. |
+| `event … already exists in the target calendar` | That calendar already has an event with the same id that USMP did not write. Nothing was overwritten. |
+| "N item(s) were already in the target" | You ran this migration before. Those items were checked, not written again. |
 | "Migration NOT fully verified" | Open the report: it lists each event that didn't match. The backup has the originals. |
 
 Every error before writing ends with "Nothing was written to the target", so it's always safe to

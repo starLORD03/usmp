@@ -9,7 +9,8 @@ guide walks through building one and proving it follows the rules.
 |---|---|
 | `capabilities()` | Declare, per domain and item type, which payload fields you can **read** and **write**. |
 | `open_reader()` → `Reader.read(domain)` | Yield every item of the domain, parents before children. **Never change the provider.** |
-| `open_writer()` → `Writer.write(items)` | Write items in order and yield the provider's id for each one. |
+| `open_writer()` → `Writer.write(items)` | Write items and yield the provider's id for each one as soon as it is stored (any order). |
+| `Writer.already_written(items, known)` *(optional)* | Find items an earlier run already wrote, so re-runs and resumed runs write nothing twice. |
 | `Writer.read_back(domain, ids)` | Return items as the provider now stores them, so USMP can verify them. |
 
 Anything you can't map into the canonical model must be reported as a `LossRecord` with reason
@@ -120,3 +121,15 @@ class TestAcme(ConnectorConformance):
 
 Read-only or write-only connectors set `can_write = False` or `can_read = False`. The individual
 checks (`check_read`, `check_round_trip`, …) can also be called directly.
+
+## 5. Safe re-runs
+
+People run migrations twice, and connections drop halfway. USMP keeps a progress record next to
+the backup and passes it to your writer as `known` (usmp_id → `WriteResult`). The default
+`already_written` trusts that record, which already makes `usmp migrate --resume` safe.
+
+To also make a plain second run safe, store each item's `usmp_id` on the provider, somewhere that
+is not part of the item itself (an extended property, a hidden field, `X-USMP-ID` in iCalendar),
+and override `already_written` to look items up by it. Remember where already-present parents
+are, so that `write()` can put new children under them. Then set `finds_written = True` in your
+conformance test class to run `test_rerun_finds_written_items`.

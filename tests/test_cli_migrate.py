@@ -1,13 +1,15 @@
+from collections.abc import Iterable, Iterator
 from pathlib import Path
 
 import pytest
-from typer.testing import CliRunner
+from typer.testing import CliRunner, Result
 
 from tests.conftest import make_event
 from usmp.cli import migrate as migrate_cli
 from usmp.cli.app import app
-from usmp.connectors.jsondir import JsonDirConnector
+from usmp.connectors.jsondir import JsonDirConnector, _JsonDirWriter
 from usmp.core.models import Item
+from usmp.sdk.connector import ConnectorError, WriteResult
 
 runner = CliRunner()
 
@@ -115,13 +117,113 @@ def test_interactive_confirmation(
     assert not (tmp_path / "new").exists()
 
 
-def test_rerun_into_same_target_is_reported_not_verified(tmp_path: Path, source_dir: Path) -> None:
+def text(result: Result) -> str:
+    """Output with Rich's line wrapping undone."""
+    return " ".join(result.output.split())
+
+
+def test_rerun_into_same_target_writes_nothing_twice(tmp_path: Path, source_dir: Path) -> None:
     assert invoke(tmp_path, source_dir, "--yes").exit_code == 0
 
     second = invoke(tmp_path, source_dir, "--yes")
 
-    assert second.exit_code == migrate_cli.EXIT_NOT_VERIFIED
-    assert "refusing to overwrite" in second.output
+    assert second.exit_code == migrate_cli.EXIT_OK, second.output
+    assert "4 item(s) were already in the target" in text(second)
+    assert len(list((tmp_path / "new").rglob("*.json"))) == 4
+
+
+def stop_writing(monkeypatch: pytest.MonkeyPatch, after: int, error: BaseException) -> None:
+    original = _JsonDirWriter.write
+
+    def write(self: _JsonDirWriter, items: Iterable[Item]) -> Iterator[WriteResult]:
+        for n, result in enumerate(original(self, items)):
+            if n == after:
+                raise error
+            yield result
+
+    monkeypatch.setattr(_JsonDirWriter, "write", write)
+
+
+def resume_cli(tmp_path: Path, *extra: str):  # type: ignore[no-untyped-def]
+    return runner.invoke(
+        app,
+        [
+            "migrate",
+            "--resume",
+            str(tmp_path / "backup.usmp"),
+            "--report-dir",
+            str(tmp_path / "reports"),
+            *extra,
+        ],
+    )
+
+
+def test_interrupted_migration_can_be_resumed(
+    tmp_path: Path, source_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with monkeypatch.context() as patch:
+        stop_writing(patch, 2, KeyboardInterrupt())
+        stopped = invoke(tmp_path, source_dir, "--yes")
+    assert stopped.exit_code == migrate_cli.EXIT_CANCELLED
+    assert "usmp migrate --resume" in text(stopped)
+
+    resumed = resume_cli(tmp_path, "--yes")
+
+    assert resumed.exit_code == migrate_cli.EXIT_OK, resumed.output
+    assert "already in the target" in text(resumed)
+    assert len(list((tmp_path / "new").rglob("*.json"))) == 4
+
+
+def test_failed_write_suggests_resume(
+    tmp_path: Path, source_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    stop_writing(monkeypatch, 1, ConnectorError("disk full"))
+
+    result = invoke(tmp_path, source_dir, "--yes")
+
+    assert result.exit_code == migrate_cli.EXIT_NOT_VERIFIED
+    assert "disk full" in text(result)
+    assert "usmp migrate --resume" in text(result)
+
+
+def test_stopped_before_writing_says_nothing_was_written(
+    tmp_path: Path, source_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def interrupted(*args: object, **kwargs: object) -> None:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(migrate_cli, "migrate", interrupted)
+
+    result = invoke(tmp_path, source_dir, "--yes")
+
+    assert result.exit_code == migrate_cli.EXIT_CANCELLED
+    assert "nothing was written" in text(result)
+
+
+def test_resume_imports_a_backup_into_a_new_target(tmp_path: Path, source_dir: Path) -> None:
+    assert invoke(tmp_path, source_dir, "--dry-run").exit_code == 0
+
+    missing_target = resume_cli(tmp_path, "--yes")
+    imported = resume_cli(tmp_path, "--yes", "--to", f"jsondir:path={tmp_path / 'other'}")
+
+    assert missing_target.exit_code == migrate_cli.EXIT_ERROR
+    assert "give --to" in text(missing_target)
+    assert imported.exit_code == migrate_cli.EXIT_OK, imported.output
+    assert len(list((tmp_path / "other").rglob("*.json"))) == 4
+
+
+def test_resume_problems_are_explained(tmp_path: Path, source_dir: Path) -> None:
+    assert invoke(tmp_path, source_dir, "--yes").exit_code == 0
+
+    with_source = resume_cli(tmp_path, "--from", "jsondir:path=x")
+    dry = resume_cli(tmp_path, "--dry-run")
+    other = resume_cli(tmp_path, "--to", "memory:")
+
+    assert with_source.exit_code == migrate_cli.EXIT_ERROR
+    assert "leave out --from" in text(with_source)
+    assert dry.exit_code == 0 and "nothing was written" in text(dry)
+    assert other.exit_code == migrate_cli.EXIT_ERROR
+    assert "Nothing more was written" in text(other)
 
 
 def test_preview_explains_losses_and_blocked_items(

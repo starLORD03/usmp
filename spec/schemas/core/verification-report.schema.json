@@ -94,6 +94,12 @@
           },
           "title": "Declared Loss Fields",
           "type": "array"
+        },
+        "already_present": {
+          "default": false,
+          "description": "The item was already on the target (written by an earlier or interrupted run), so it was not written again; it was still read back and verified.",
+          "title": "Already Present",
+          "type": "boolean"
         }
       },
       "required": [
@@ -197,6 +203,13 @@
         "missing": {
           "minimum": 0,
           "title": "Missing",
+          "type": "integer"
+        },
+        "already_present": {
+          "default": 0,
+          "description": "Items found on the target and not written again.",
+          "minimum": 0,
+          "title": "Already Present",
           "type": "integer"
         }
       },
