@@ -22,6 +22,7 @@ from usmp.core.models import (
     BundleManifest,
     CapabilityManifest,
     ConnectorInfo,
+    DataWarning,
     Item,
     ItemResult,
     ItemStatus,
@@ -66,6 +67,8 @@ class Preview:
     """The part of the exported data being migrated; ``None`` means all of it."""
     left_out: int = 0
     """Exported items outside the selection: in the backup, but not migrated."""
+    warnings: list[DataWarning] = field(default_factory=list)
+    """Odd things in the source data, e.g. events ending before they start (migrated as is)."""
 
     @property
     def total(self) -> int:
@@ -349,6 +352,7 @@ def _write_and_verify(
         losses=all_losses,
         errors=errors,
         selection=preview.selection,
+        warnings=preview.warnings,
     )
 
 
@@ -395,6 +399,7 @@ def migrate(
         bundle_path=bundle_path,
         selection=selection,
         left_out=left_out,
+        warnings=domains.warnings(domain, items),
     )
     if dry_run:
         return MigrationResult(preview=preview)
@@ -485,6 +490,7 @@ def resume(
         bundle_path=bundle_path,
         selection=selection,
         left_out=left_out,
+        warnings=domains.warnings(domain, items),
     )
     if dry_run:
         return MigrationResult(preview=preview)

@@ -43,7 +43,9 @@ never changed, and a backup of everything is saved before anything is written.
     ```
 
 4. **Read the preview.** It lists how many calendars and events will move and anything that
-   can't be carried over. Type `y` to go ahead.
+   can't be carried over. It also points out events that look wrong in your old calendar, such
+   as one that ends before it starts. They are copied exactly as they are; fix them at either
+   end if they're mistakes. Type `y` to go ahead.
 5. **Check the result.** "✓ Migration verified" means every event was read back from iCloud and
    matched. The full report opens in a browser; the backup (`.usmp`) stays with you.
 

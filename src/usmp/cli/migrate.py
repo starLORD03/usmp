@@ -75,6 +75,7 @@ def _show_preview(preview: Preview) -> None:
     for type_, count in sorted(preview.counts.items()):
         counts.add_row(type_, str(count))
     console.print(counts)
+    _show_warnings(preview)
     if not preview.losses:
         console.print(
             "  [green]Nothing will be lost: every field can be written and verified.[/green]"
@@ -94,6 +95,24 @@ def _show_preview(preview: Preview) -> None:
             f"  [red]{preview.blocked_items} item(s) cannot be stored by the target at all "
             "and will be reported as missing.[/red]"
         )
+
+
+_SHOWN_WARNINGS = 5
+
+
+def _show_warnings(preview: Preview) -> None:
+    if not preview.warnings:
+        return
+    console.print(
+        f"\n  [yellow]⚠ {len(preview.warnings)} item(s) look wrong in the source. They will be "
+        "copied exactly as they are:[/yellow]"
+    )
+    for w in preview.warnings[:_SHOWN_WARNINGS]:
+        where = f"{w.hint}: " if w.hint else ""
+        console.print(f"    {where}{w.detail}", markup=False, highlight=False)
+    more = len(preview.warnings) - _SHOWN_WARNINGS
+    if more > 0:
+        console.print(f"    [dim]… and {more} more, all listed in the report.[/dim]")
 
 
 def _show_report(report: VerificationReport, paths: list[Path]) -> None:

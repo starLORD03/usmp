@@ -276,7 +276,10 @@ class TestEdgeCases:
         ("body", "message"),
         [
             ("BEGIN:VEVENT\nUID:x\nSUMMARY:no start\nEND:VEVENT", "has no DTSTART"),
-            (vevent("DTSTART:20260105T090000Z", "DTEND:20260105T080000Z"), "cannot be represented"),
+            (
+                vevent("DTSTART;VALUE=DATE:20260105", "DTEND:20260105T080000Z"),
+                "cannot be represented",
+            ),
             (
                 vevent("DTSTART:20260105T090000Z") + "\n" + vevent("DTSTART:20260106T090000Z"),
                 "appears more than once",
@@ -288,6 +291,13 @@ class TestEdgeCases:
     ) -> None:
         with pytest.raises(ConnectorError, match=message):
             read(ics(tmp_path, body))
+
+    def test_end_before_start_is_read_without_the_end(self, tmp_path: Path) -> None:
+        records = read(ics(tmp_path, vevent("DTSTART:20260105T090000Z", "DTEND:20260105T080000Z")))
+        [record] = [r for r in records if r.item.type == "event"]
+
+        assert "end" not in record.item.payload
+        assert [loss.field for loss in record.losses] == ["end"]
 
     def test_not_an_ics_file(self, tmp_path: Path) -> None:
         bad = tmp_path / "bad.ics"

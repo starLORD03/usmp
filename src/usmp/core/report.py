@@ -18,6 +18,10 @@ ALREADY_PRESENT = (
     "(they are still counted and verified above)."
 )
 
+WARNINGS_NOTE = (
+    "These items look wrong in the source, for example an event that ends before it starts. "
+    "They were migrated exactly as they are; fix them at either end if they are mistakes."
+)
 LEFT_OUT = (
     "item(s) were outside the chosen selection: they are in the backup but were not migrated, "
     "and are not counted above."
@@ -81,6 +85,11 @@ def to_markdown(report: VerificationReport) -> str:
         lines += ["", f"{s.left_out} {LEFT_OUT}"]
     if report.errors:
         lines += ["", "## Errors", "", *(f"- {e}" for e in report.errors)]
+    if report.warnings:
+        lines += ["", "## Worth checking in the source", "", WARNINGS_NOTE, ""]
+        lines += ["| Item | Where | What |", "|---|---|---|"]
+        for w in report.warnings:
+            lines.append(f"| `{w.usmp_id}` | {w.hint or '-'} | {w.detail} |")
     problems = [i for i in report.items if i.status in (ItemStatus.MISMATCH, ItemStatus.MISSING)]
     if problems:
         lines += ["", "## Items that need attention", "", "| Item | Type | Status | Fields |"]
@@ -170,6 +179,14 @@ def to_html(report: VerificationReport) -> str:
         parts.append("<h2>Errors</h2><ul>")
         parts += [f"<li class='bad'>{e(err)}</li>" for err in report.errors]
         parts.append("</ul>")
+    if report.warnings:
+        parts.append(f"<h2>Worth checking in the source</h2><p>{e(WARNINGS_NOTE)}</p>")
+        parts.append("<div class='wrap'><table><tr><th>Item</th><th>Where</th><th>What</th></tr>")
+        parts += [
+            row(f"<code>{e(w.usmp_id)}</code>", e(w.hint or "-"), e(w.detail))
+            for w in report.warnings
+        ]
+        parts.append("</table></div>")
     problems = [i for i in report.items if i.status in (ItemStatus.MISMATCH, ItemStatus.MISSING)]
     if problems:
         parts.append("<h2>Items that need attention</h2><div class='wrap'><table>")

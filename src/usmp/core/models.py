@@ -189,6 +189,21 @@ class LossRecord(_Model):
     detail: str = ""
 
 
+class DataWarning(_Model):
+    """Something odd in the source data that a person should look at.
+
+    The item is still migrated exactly as it is: a warning is neither a loss nor an error.
+    """
+
+    usmp_id: UsmpId
+    field: str = Field(min_length=1, description="Top-level payload field the warning is about.")
+    detail: str = Field(min_length=1, description="What looks wrong, in plain words.")
+    hint: str | None = Field(
+        default=None,
+        description="Where to find the item, such as its start time. Never its title or notes.",
+    )
+
+
 # --- Capabilities ------------------------------------------------------------------------------
 
 
@@ -426,6 +441,11 @@ class VerificationReport(_Model):
     )
     selection: Selection | None = Field(
         default=None, description="The part of the data that was migrated; absent means all."
+    )
+    warnings: list[DataWarning] = Field(
+        default_factory=list,
+        description="Odd things in the source data, such as an event that ends before it starts. "
+        "Those items were migrated as they are; warnings do not affect `ok`.",
     )
 
     @computed_field  # type: ignore[prop-decorator]

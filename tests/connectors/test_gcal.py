@@ -154,6 +154,25 @@ def by_uid(records: list[Any]) -> dict[str, dict[str, Any]]:
 
 
 class TestReading:
+    def test_event_ending_before_it_starts_keeps_everything_else(self, google: FakeGoogle) -> None:
+        google.add_calendar("me@example.com", "Me", timeZone="Europe/Paris")
+        google.add_event(
+            "me@example.com",
+            {
+                "id": "odd",
+                "iCalUID": "odd@google.com",
+                "summary": "Odd",
+                "start": {"dateTime": "2026-01-05T10:00:00+01:00", "timeZone": "Europe/Paris"},
+                "end": {"dateTime": "2026-01-05T09:00:00+01:00", "timeZone": "Europe/Paris"},
+            },
+        )
+
+        [_, record] = list(connector().open_reader().read("calendar"))
+
+        assert "end" not in record.item.payload
+        assert record.item.payload["title"] == "Odd"
+        assert [loss.field for loss in record.losses] == ["end"]
+
     def test_maps_series_exceptions_and_cancellations(self, google: FakeGoogle) -> None:
         seed(google)
         records = list(connector().open_reader().read("calendar"))

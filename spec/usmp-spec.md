@@ -139,7 +139,10 @@ A migration of one domain from a source to a target proceeds as follows:
 2. **Export.** Read all items from the source **using only the Reader role**, and write a bundle.
    Implementations MUST NOT modify the source in any way.
 3. **Preview.** Compute losses (§6) from the item payloads and both capability manifests. Present
-   counts and losses to the user.
+   counts and losses to the user, and any **data warnings**: valid items that look wrong in the
+   source (domains define them; for calendars, events that end before they start). Warned items
+   are still migrated unchanged; reports list the warnings under `warnings`, and they never
+   affect whether a migration is ok.
 4. **Confirm.** Do not write to the target without the user's confirmation, which MAY be given in
    advance (e.g. a `--yes` flag). A *dry run* stops here.
 5. **Import.** Write items to the target. The writer reports the target's native id for each item.
