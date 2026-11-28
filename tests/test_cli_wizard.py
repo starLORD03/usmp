@@ -287,3 +287,18 @@ def test_command_line_carries_the_selection() -> None:
         calendars=["My Work"],
     )
     assert line.endswith("--domain calendar --since 2025-01-01 --calendar 'My Work'")
+
+
+@pytest.mark.parametrize(
+    ("answer", "chosen"),
+    [
+        ("", ""),
+        ("create new calendars", ""),
+        (" New ", ""),
+        ("All calendars", ""),
+        ("Work", "Work"),
+    ],
+)
+def test_calendar_answer_that_means_the_default(answer: str, chosen: str) -> None:
+    with runner.isolation(input=answer + "\n"):
+        assert wizard._calendar("target") == chosen

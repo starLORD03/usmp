@@ -132,18 +132,29 @@ class FakeGoogle:
             ]
             body["hangoutLink"] = video[0]["uri"]
         body.pop("eventType", None)  # import only creates ordinary events
+        rooms = [a.get("displayName") or a["email"] for a in body.get("attendees", [])
+                 if a.get("resource")]  # fmt: skip
+        if rooms:  # Google adds booked rooms to the location
+            body["location"] = ", ".join(
+                [body["location"], *rooms] if body.get("location") else rooms
+            )
         return body
 
     def _store(self, cal_id: str, ev: dict[str, Any]) -> dict[str, Any]:
         ev = copy.deepcopy(ev)
         ev.setdefault("status", "confirmed")
-        ev.setdefault("organizer", {"email": self.account, "self": True})
+        ev.setdefault("organizer", {"email": cal_id, "self": True})
         if ev.get("transparency") == "opaque":
             del ev["transparency"]  # Google omits the default
         self.events[cal_id][ev["id"]] = ev
         return ev
 
     def _import(self, cal_id: str, body: dict[str, Any]) -> tuple[int, Any]:
+        organizer = (body.get("organizer") or {}).get("email")
+        guests = {a.get("email") for a in body.get("attendees", [])}
+        if organizer and cal_id not in guests | {organizer}:
+            reason = "participantIsNeitherOrganizerNorAttendee"
+            return 400, {"error": {"code": 400, "errors": [{"reason": reason}]}}
         for ev in self.events[cal_id].values():
             if ev.get("iCalUID") == body["iCalUID"] and "recurringEventId" not in ev:
                 return 409, {
