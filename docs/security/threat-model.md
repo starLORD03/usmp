@@ -53,7 +53,7 @@ operating system, and the providers themselves (Google, Apple…).
 
 - **Reports are not encrypted.** They hold no titles, notes or times, but loss details can name
   attendees (for example a meeting room's address) and calendars. Keep the report folder private
-  or delete reports you don't need. Tracked in the follow-up issues below.
+  or delete reports you don't need. Tracked in [#63](https://github.com/starLORD03/usmp/issues/63).
 - **The progress record** names the target address and user name (needed to resume), even next to
   an encrypted backup.
 - **A plain backup is as sensitive as the calendar itself.** Without `--encrypt`, anyone who can
@@ -62,10 +62,10 @@ operating system, and the providers themselves (Google, Apple…).
   common passphrase can still be guessed offline.
 - **Memory**: an encrypted backup is decrypted in memory, and calendars are held in memory during a
   run. Large `.ics` files and server responses are not size-limited yet (a crafted file can use
-  a lot of memory).
+  a lot of memory; [#64](https://github.com/starLORD03/usmp/issues/64)).
 - **Error messages** from services are shortened but shown as received; they could include a URL
   or an event UID.
-- **Third-party connectors** are trusted code.
+- **Third-party connectors** are trusted code ([#65](https://github.com/starLORD03/usmp/issues/65)).
 
 ## Reporting a vulnerability
 
