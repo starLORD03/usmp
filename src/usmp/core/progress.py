@@ -26,6 +26,8 @@ from usmp.sdk.connector import WriteResult
 PROGRESS_SUFFIX = ".progress.jsonl"
 # Keys naming an environment variable (password_env) are fine; the value itself never is.
 _SECRET_KEY = re.compile(r"pass|secret|token|credential|auth|key", re.IGNORECASE)
+# A password written into a URL (https://user:pass@host) is dropped, keeping the user name.
+_URL_PASSWORD = re.compile(r"(?<=://)([^/@:\s]*):[^/@\s]*@")
 
 
 class ProgressError(Exception):
@@ -63,7 +65,11 @@ def progress_path(bundle_path: Path) -> Path:
 
 def safe_config(config: Mapping[str, str]) -> dict[str, str]:
     """``config`` without anything that could be a secret."""
-    return {k: v for k, v in config.items() if k.endswith("_env") or not _SECRET_KEY.search(k)}
+    return {
+        k: _URL_PASSWORD.sub(r"\1@", v)
+        for k, v in config.items()
+        if k.endswith("_env") or not _SECRET_KEY.search(k)
+    }
 
 
 def read_progress(bundle_path: Path) -> tuple[ProgressHeader, dict[str, WriteResult]] | None:

@@ -194,6 +194,10 @@ class TestProgressRecord:
         config = {"url": "u", "password": "p", "password_env": "PW", "api_token": "t", "x_key": "k"}
         assert safe_config(config) == {"url": "u", "password_env": "PW"}
 
+    def test_safe_config_drops_passwords_in_urls(self) -> None:
+        config = {"url": "https://me:hunter2@dav.example/cal/", "path": "/a:b@c"}
+        assert safe_config(config) == {"url": "https://me@dav.example/cal/", "path": "/a:b@c"}
+
     def test_damaged_last_line_is_ignored(self, tmp_path: Path) -> None:
         bundle = tmp_path / "b.usmp"
         migrate(source(), target(), bundle_path=bundle)
