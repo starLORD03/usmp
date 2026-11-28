@@ -543,7 +543,7 @@ class TestApi:
 
         assert result.report is not None and result.report.ok, result.report
         assert google.lose_answers == []
-        [cal_id] = [c for c in google.calendars if c.endswith("group.calendar.google.com")]
+        [cal_id] = list(google.calendars)  # nothing was there before: this one was created
         uids = sorted(
             e["iCalUID"] for e in google.events[cal_id].values() if "recurringEventId" not in e
         )
@@ -559,7 +559,7 @@ class TestApi:
 
         assert result.report is not None and result.report.ok, result.report
         assert google.refuse == []
-        assert len([c for c in google.calendars if c.endswith("group.calendar.google.com")]) == 1
+        assert len(google.calendars) == 1, "one calendar created, not two"
 
     def test_own_write_refused_as_duplicate_is_recognised(self) -> None:
         answers = [(500, "backend error"), (409, "duplicate")]
