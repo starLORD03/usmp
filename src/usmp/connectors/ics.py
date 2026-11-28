@@ -29,6 +29,7 @@ from usmp.connectors._ical import (
     parse_vcalendar,
     recurrence_key,
     resolve_zone,
+    unescape_text,
     unstorable_fields,
     vevent,
 )
@@ -55,11 +56,11 @@ _CALENDAR_IGNORED = frozenset({"PRODID", "VERSION", "CALSCALE", "METHOD"})
 
 
 def _calendar_payload(cal: icalendar.Calendar, path: Path) -> tuple[dict[str, Any], list[str]]:
-    name = str(cal.get("X-WR-CALNAME") or cal.get("NAME") or path.stem)
+    name = unescape_text(cal.get("X-WR-CALNAME") or cal.get("NAME") or path.stem)
     payload: dict[str, Any] = {"name": name}
     description = cal.get("X-WR-CALDESC") or cal.get("DESCRIPTION")
     if description:
-        payload["description"] = str(description)
+        payload["description"] = unescape_text(description)
     color = str(cal.get("COLOR") or cal.get("X-APPLE-CALENDAR-COLOR") or "")
     if HEX_COLOR.fullmatch(color):
         payload["color"] = color[:7]

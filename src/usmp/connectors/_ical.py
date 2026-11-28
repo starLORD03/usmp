@@ -426,6 +426,35 @@ def to_ical_time(value: str, zone: str | None) -> date | datetime:
     return dt.replace(tzinfo=ZoneInfo(zone)) if zone else dt
 
 
+class Text(icalendar.vText):
+    r"""A TEXT value escaped exactly as RFC 5545 §3.3.11 says.
+
+    icalendar first turns a literal ``\N`` into a line break, so ``C:\Users\N`` would come back
+    changed; this escapes the backslash instead.
+    """
+
+    def to_ical(self) -> bytes:
+        text = str(self).replace("\\", "\\\\").replace(";", "\\;").replace(",", "\\,")
+        return text.replace("\r\n", "\\n").replace("\n", "\\n").encode()
+
+
+_ESCAPED = re.compile(r"\\([\\;,nN])")
+
+
+def unescape_text(value: object) -> str:
+    """A TEXT value icalendar left escaped (it does so for ``X-`` and calendar properties)."""
+    if isinstance(value, icalendar.vText):  # already unescaped
+        return str(value)
+    return _ESCAPED.sub(lambda m: "\n" if m[1] in "nN" else m[1], str(value))
+
+
+class Categories(icalendar.vCategory):
+    """CATEGORIES whose values are escaped like :class:`Text`."""
+
+    def to_ical(self) -> bytes:
+        return b",".join(Text(str(c)).to_ical() for c in self.cats)
+
+
 def vevent(payload: Mapping[str, Any]) -> icalendar.Event:
     ev = icalendar.Event()
     zone = payload.get("time_zone")
@@ -437,10 +466,12 @@ def vevent(payload: Mapping[str, Any]) -> icalendar.Event:
     conferences = list(payload.get("conferences", []))
     notes = notes_with_conferences(payload.get("description"), conferences)
     texts = (("summary", payload.get("title")), ("description", notes),
-             ("location", payload.get("location")), ("url", payload.get("url")))  # fmt: skip
+             ("location", payload.get("location")))  # fmt: skip
     for prop, value in texts:
         if value is not None:
-            ev.add(prop, value)
+            ev.add(prop, Text(value))
+    if payload.get("url") is not None:
+        ev.add("url", payload["url"])
     if "status" in payload:
         ev.add("status", payload["status"].upper())
     if "availability" in payload:
@@ -474,10 +505,10 @@ def vevent(payload: Mapping[str, Any]) -> icalendar.Event:
         valarm.add("action", alarm.get("action", "display").upper())
         trigger = icalendar.vDuration.from_ical(alarm["trigger"])  # type: ignore[no-untyped-call]
         valarm.add("trigger", trigger)
-        valarm.add("description", payload.get("title") or "Reminder")
+        valarm.add("description", Text(payload.get("title") or "Reminder"))
         ev.add_component(valarm)
     if payload.get("categories"):
-        ev.add("categories", payload["categories"])
+        ev.add("categories", Categories(payload["categories"]))
     for att in payload.get("attachments", []):
         params = {}
         if att.get("media_type"):
@@ -608,7 +639,7 @@ def build_vcalendar(
     cal.add("prodid", "-//USMP//usmp-protocol//EN")
     cal.add("version", "2.0")
     for name, value in (properties or {}).items():
-        cal.add(name, value)
+        cal.add(name, Text(value) if isinstance(value, str) else value)
     events = list(events)
     if usmp_ids is not None and len(usmp_ids) != len(events):
         raise ValueError("give one usmp_id per event")

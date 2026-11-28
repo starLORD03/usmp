@@ -634,3 +634,21 @@ def test_text_icalendar_cannot_store_is_declared_not_mismatched(tmp_path: Path) 
     [verdict] = result.report.items
     assert verdict.status is ItemStatus.VERIFIED_WITH_DECLARED_LOSS
     assert {"organizer", "attendees", "attachments"} <= set(verdict.declared_loss_fields)
+
+
+@pytest.mark.parametrize("text", ["\\N", "C:\\Users\\Nina", "a,b;c\nd", "ends in \\"])
+def test_backslashes_and_separators_round_trip(tmp_path: Path, text: str) -> None:
+    cal = calendar_item("s", "c", {"name": text})
+    payload = {"uid": "u@x", "start": "2026-01-01", "title": text, "location": text,
+               "description": text, "categories": [text, "k"]}  # fmt: skip
+    ev = event_item("s", "e", payload, parent=cal.usmp_id)
+    path = tmp_path / "out.ics"
+
+    list(IcsConnector({"path": str(path)}).open_writer().write([cal, ev]))
+    records = list(IcsConnector({"path": str(path)}).open_reader().read("calendar"))
+
+    back = {r.item.type: r.item.payload for r in records}
+    assert back["calendar"]["name"] == text
+    assert {k: back["event"][k] for k in ("title", "location", "description", "categories")} == {
+        "title": text, "location": text, "description": text, "categories": [text, "k"]
+    }  # fmt: skip
