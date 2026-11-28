@@ -10,7 +10,7 @@ never changed, and a backup of everything is saved before anything is written.
     Make a realistic 1,000-event test calendar and move that first:
     `python -m usmp.testing.synthetic test-calendar.ics`. Import it into a new, empty calendar
     on your old service, then follow the steps below with only that calendar
-    (answer its name when asked "Only this calendar").
+    (type its name when asked "Only this calendar").
 
 ## Google Calendar → iCloud
 
@@ -30,7 +30,7 @@ never changed, and a backup of everything is saved before anything is written.
     Google account email: you@gmail.com
       Path to client_secret.json: ~/Downloads/client_secret.json
       Open the sign-in page in your browser now? [Y/n]:
-    Only this calendar (press Enter to skip):
+    Only this calendar (type its name, or press Enter for all calendars):
 
     Where should it go?
     Choose a number: 2

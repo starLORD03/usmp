@@ -90,6 +90,13 @@ _RESTORABLE = frozenset(
 )  # fmt: skip
 _CONF = {"conferenceDataVersion": 1}  # keep conferenceData when writing
 _USMP_KEY = "usmp_id"  # extendedProperties.private key marking events USMP wrote
+# Google only imports an event if the calendar is its organizer or a guest. When neither, USMP adds
+# the calendar as a guest and records it here, so readers can leave that guest out again.
+_GUEST_KEY = "usmp_added_guest"
+# Google adds the names of booked rooms to an event's location; the location as written is kept
+# here so readers can restore it (unless someone has edited the location since).
+_LOCATION_KEY = "usmp_location"
+_MARKERS = (_USMP_KEY, _GUEST_KEY, _LOCATION_KEY)
 _ENTRY_FEATURES = {"video": ["video"], "phone": ["phone"], "sip": ["audio"]}
 
 
@@ -238,6 +245,11 @@ class _EventConverter:
                           ("location", "location")):  # fmt: skip
             if ev.get(key):
                 payload[name] = ev[key]
+        written = _written_location(ev)
+        if written is not None:
+            payload.pop("location", None)
+            if written:
+                payload["location"] = written
         payload["status"] = ev.get("status", "confirmed")
         payload["availability"] = "free" if ev.get("transparency") == "transparent" else "busy"
         if ev.get("visibility") in ("public", "private", "confidential"):
@@ -253,7 +265,10 @@ class _EventConverter:
                 "name": organizer.get("displayName"),
             }
         attendees = []
+        added = ((ev.get("extendedProperties") or {}).get("private") or {}).get(_GUEST_KEY)
         for att in ev.get("attendees", []):
+            if added and att.get("email") == added:
+                continue
             if not att.get("email"):
                 conv.lose("attendees", "an attendee without an email address")
                 continue
@@ -300,12 +315,23 @@ def _marker(ev: Mapping[str, Any]) -> str | None:
     return str(value) if value else None
 
 
+def _written_location(ev: Mapping[str, Any]) -> str | None:
+    """The location USMP wrote, if Google has since only added booked rooms' names to it."""
+    original = ((ev.get("extendedProperties") or {}).get("private") or {}).get(_LOCATION_KEY)
+    if original is None:
+        return None
+    rooms = {a.get("displayName") or a.get("email") for a in ev.get("attendees", [])
+             if a.get("resource")}  # fmt: skip
+    parts, kept = set(str(ev.get("location") or "").split(", ")), set(original.split(", "))
+    return str(original) if (parts - kept) <= rooms | {""} and kept <= parts | {""} else None
+
+
 def _drop_marker(google: dict[str, Any]) -> None:
-    """Remove USMP's own marker: it identifies the event and is not part of it."""
+    """Remove USMP's own markers: they are bookkeeping, not part of the event."""
     props = google.get("extendedProperties")
-    if not isinstance(props, dict) or _USMP_KEY not in (props.get("private") or {}):
+    if not isinstance(props, dict) or not set(_MARKERS) & set(props.get("private") or {}):
         return
-    private = {k: v for k, v in props["private"].items() if k != _USMP_KEY}
+    private = {k: v for k, v in props["private"].items() if k not in _MARKERS}
     props = {k: v for k, v in props.items() if k != "private"} | (
         {"private": private} if private else {}
     )
@@ -688,10 +714,19 @@ class _GoogleWriter(Writer):
                 found = merged = self._create_calendar(existing, {"name": "Imported"})[0]
             cal_id = found
             body, changed = _google_event(item.payload)
+            marks = {_USMP_KEY: item.usmp_id}
+            organizer = (body.get("organizer") or {}).get("email")
+            guests = {a.get("email") for a in body.get("attendees", [])}
+            if organizer and cal_id not in guests | {organizer}:
+                guest = {"email": cal_id, "responseStatus": "accepted"}
+                body["attendees"] = [*body.get("attendees", []), guest]
+                marks[_GUEST_KEY] = cal_id
+            if any(a.get("resource") for a in body.get("attendees", [])):
+                marks[_LOCATION_KEY] = str(body.get("location") or "")
             private = body.setdefault("extendedProperties", {}).setdefault("private", {})
             body["extendedProperties"] = {
                 **body["extendedProperties"],
-                "private": {**private, _USMP_KEY: item.usmp_id},
+                "private": {**private, **marks},
             }
             path_cal = quote(cal_id, safe="")
             if "recurrence_id" in item.payload:

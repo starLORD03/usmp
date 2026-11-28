@@ -82,6 +82,12 @@ Reported as **declared losses** (shown before you migrate):
 Writing uses Google's `import` method: events keep their original iCalendar UID and organizer, and
 **no invitations are sent** to attendees.
 
+**Invitations from someone else** (or from your old address) are only accepted by Google if the
+calendar they go into is the organizer or a guest. USMP adds that calendar as a guest, so in Google
+Calendar you'll see it in the guest list. The original organizer and guests are kept unchanged, and
+USMP leaves the added guest out when it reads or verifies the event. In the same way, when Google
+adds a booked room's name to an event's location, USMP reads back the location as it was written.
+
 ## Manual end-to-end checklist
 
 CI tests the connector against a simulated Google API. Before a release, also check with a real

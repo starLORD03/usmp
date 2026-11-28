@@ -57,6 +57,22 @@ def _ask_optional(text: str) -> str:
     return str(typer.prompt(f"{text} (press Enter to skip)", default="", show_default=False))
 
 
+# Answers that mean "the default" rather than a calendar's name.
+_DEFAULT_ANSWERS = {"all", "all calendars", "new", "new calendars", "create new calendars", "none"}
+
+
+def _calendar(role: str) -> str:
+    """One calendar to read from, or to put everything into; empty for the default."""
+    text = (
+        "Only this calendar (type its name, or press Enter for all calendars)"
+        if role == "source"
+        else "Put everything into one existing calendar (type its name, or press Enter to "
+        "create new calendars)"
+    )
+    answer = str(typer.prompt(text, default="", show_default=False)).strip()
+    return "" if answer.lower() in _DEFAULT_ANSWERS else answer
+
+
 def _password_env(name: str) -> str:
     return f"USMP_WIZARD_{name.upper()}_PASSWORD"
 
@@ -66,11 +82,7 @@ def _caldav(url: str | None, account_hint: str, password_hint: str) -> Callable[
         server = url or _ask("CalDAV server address (https://…)")
         username = _ask(account_hint)
         config = {"url": server, "username": username}
-        calendar = _ask_optional(
-            "Only this calendar"
-            if role == "source"
-            else "Put everything into this existing calendar (default: create new calendars)"
-        )
+        calendar = _calendar(role)
         if calendar:
             config["calendar"] = calendar
         endpoint = Endpoint(config, "caldav")
@@ -130,11 +142,7 @@ def _google(role: str) -> Endpoint:
         account = signed_in
         console.print(f"  [green]✓ Signed in to Google as {account}.[/green]")
     config = {"account": account}
-    calendar = _ask_optional(
-        "Only this calendar"
-        if role == "source"
-        else "Put everything into this existing calendar (default: create new calendars)"
-    )
+    calendar = _calendar(role)
     if calendar:
         config["calendar"] = calendar
     return Endpoint(config, "google")
