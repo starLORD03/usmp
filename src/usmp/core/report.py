@@ -18,6 +18,11 @@ ALREADY_PRESENT = (
     "(they are still counted and verified above)."
 )
 
+LEFT_OUT = (
+    "item(s) were outside the chosen selection: they are in the backup but were not migrated, "
+    "and are not counted above."
+)
+
 REASON_LABELS = {
     "unsupported_by_canonical": "USMP has no place for it yet (kept in the backup)",
     "unsupported_by_target": "the target cannot store it",
@@ -57,6 +62,7 @@ def to_markdown(report: VerificationReport) -> str:
         f"| Started | {report.started_at:%Y-%m-%d %H:%M:%S %Z} |",
         f"| Finished | {report.finished_at:%Y-%m-%d %H:%M:%S %Z} |",
         f"| Run id | `{report.run_id}` |",
+        *([f"| Selection | {report.selection.describe()} |"] if report.selection else []),
         "",
         "## Summary",
         "",
@@ -71,6 +77,8 @@ def to_markdown(report: VerificationReport) -> str:
     ]
     if s.already_present:
         lines += ["", f"{s.already_present} {ALREADY_PRESENT}"]
+    if s.left_out:
+        lines += ["", f"{s.left_out} {LEFT_OUT}"]
     if report.errors:
         lines += ["", "## Errors", "", *(f"- {e}" for e in report.errors)]
     problems = [i for i in report.items if i.status in (ItemStatus.MISMATCH, ItemStatus.MISSING)]
@@ -140,6 +148,7 @@ def to_html(report: VerificationReport) -> str:
         row("Started", e(f"{report.started_at:%Y-%m-%d %H:%M:%S %Z}")),
         row("Finished", e(f"{report.finished_at:%Y-%m-%d %H:%M:%S %Z}")),
         row("Run id", f"<code>{e(report.run_id)}</code>"),
+        *([row("Selection", e(report.selection.describe()))] if report.selection else []),
         "</table><h2>Summary</h2><table>",
         "<tr><th>Status</th><th class='num'>Items</th></tr>",
         row(STATUS_LABELS[ItemStatus.VERIFIED], str(s.verified), num=1),
@@ -155,6 +164,8 @@ def to_html(report: VerificationReport) -> str:
     ]
     if s.already_present:
         parts.append(f"<p>{s.already_present} {e(ALREADY_PRESENT)}</p>")
+    if s.left_out:
+        parts.append(f"<p>{s.left_out} {e(LEFT_OUT)}</p>")
     if report.errors:
         parts.append("<h2>Errors</h2><ul>")
         parts += [f"<li class='bad'>{e(err)}</li>" for err in report.errors]

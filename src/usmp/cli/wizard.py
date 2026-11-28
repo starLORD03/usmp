@@ -5,6 +5,7 @@ the end so the same migration can be repeated without questions.
 """
 
 import os
+import shlex
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -13,6 +14,7 @@ import typer
 from keyring.errors import KeyringError
 from rich.console import Console
 
+from usmp.core.selection import SelectionError, make_selection
 from usmp.sdk import credentials, registry
 from usmp.sdk.connector import ConnectorError
 
@@ -223,6 +225,42 @@ def run() -> tuple[Endpoint, Endpoint]:
     return source, target
 
 
-def command_line(source: Endpoint, target: Endpoint) -> str:
+def date_range() -> tuple[str | None, str | None]:
+    """Ask for an optional date range: ``(since, until)``, each ``None`` when left open."""
+    console.print(
+        "\n[bold]Which events?[/bold] Recurring events are always moved whole. Examples: "
+        "2025-01-01..2025-12-31, 2025-01-01.. (from then on), ..2024-12-31 (up to then)."
+    )
+    while True:
+        answer = _ask_optional("Only events in this date range").strip()
+        if not answer:
+            return None, None
+        first, sep, second = answer.partition("..")
+        since, until = (first.strip() or None, second.strip() or None) if sep else (answer, None)
+        try:
+            make_selection(since, until)
+        except SelectionError as exc:
+            console.print(f"  [yellow]{exc}. Try again.[/yellow]")
+            continue
+        return since, until
+
+
+def command_line(
+    source: Endpoint,
+    target: Endpoint,
+    *,
+    since: str | None = None,
+    until: str | None = None,
+    calendars: list[str] | None = None,
+) -> str:
     """The non-interactive command for the same migration."""
-    return f"usmp migrate --from '{source.spec}' --to '{target.spec}' --domain calendar"
+    extra = "".join(
+        f" {flag} {shlex.quote(value)}"
+        for flag, value in [
+            ("--since", since),
+            ("--until", until),
+            *(("--calendar", name) for name in calendars or []),
+        ]
+        if value
+    )
+    return f"usmp migrate --from '{source.spec}' --to '{target.spec}' --domain calendar{extra}"

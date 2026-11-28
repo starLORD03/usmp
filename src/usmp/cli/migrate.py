@@ -14,15 +14,17 @@ from rich.table import Table
 from usmp.cli import wizard
 from usmp.core.bundle import BundleError, BundleReader
 from usmp.core.engine import MigrationError, MigrationResult, Preview, migrate, resume
-from usmp.core.models import ItemStatus, VerificationReport
+from usmp.core.models import ItemStatus, Selection, VerificationReport
 from usmp.core.progress import ProgressError, progress_path, read_progress
 from usmp.core.report import (
     ALREADY_PRESENT,
+    LEFT_OUT,
     REASON_LABELS,
     STATUS_LABELS,
     summarize_losses,
     write_reports,
 )
+from usmp.core.selection import SelectionError, make_selection
 from usmp.sdk import registry
 from usmp.sdk.connector import Connector, ConnectorError
 
@@ -55,6 +57,11 @@ def _show_preview(preview: Preview) -> None:
     console.print(f"  To:    {dst}")
     console.print("  Backup of the source:")
     console.print(f"  {preview.bundle_path}", soft_wrap=True, markup=False, highlight=False)
+    if preview.selection is not None:
+        console.print(f"  Only:  {preview.selection.describe()}", markup=False, highlight=False)
+        console.print(
+            f"  [dim]{preview.left_out} item(s) left out (they stay in the backup).[/dim]"
+        )
     counts = Table("Type", "Items", box=None, padding=(0, 2))
     for type_, count in sorted(preview.counts.items()):
         counts.add_row(type_, str(count))
@@ -96,6 +103,8 @@ def _show_report(report: VerificationReport, paths: list[Path]) -> None:
     console.print(table)
     if s.already_present:
         console.print(f"  [dim]{s.already_present} {ALREADY_PRESENT}[/dim]")
+    if s.left_out:
+        console.print(f"  [dim]{s.left_out} {LEFT_OUT}[/dim]")
     for error in report.errors:
         console.print(f"  [red]• {error}[/red]")
     html = next((p for p in paths if p.suffix == ".html"), paths[0])
@@ -133,6 +142,27 @@ def command(
         typer.Option("--dry-run", help="Export and preview only; write nothing to the target."),
     ] = False,
     yes: Annotated[bool, typer.Option("--yes", "-y", help="Do not ask for confirmation.")] = False,
+    since: Annotated[
+        str | None,
+        typer.Option(
+            help="Only move events that end on or after this date (YYYY-MM-DD) or time "
+            "(YYYY-MM-DDTHH:MM). Recurring events are kept whole.",
+        ),
+    ] = None,
+    until: Annotated[
+        str | None,
+        typer.Option(
+            help="Only move events that start on or before this date (the whole day counts), or "
+            "before this time.",
+        ),
+    ] = None,
+    calendars: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--calendar",
+            help="Only move this calendar (by name, ignoring case). Repeat for several.",
+        ),
+    ] = None,
     resume_from: Annotated[
         Path | None,
         typer.Option(
@@ -148,10 +178,21 @@ def command(
 
     Run it without --from and --to to be guided step by step. The source is only ever read. A
     backup bundle of everything exported is saved first. Running the same migration again, or
-    with --resume after it was interrupted, never writes anything twice.
+    with --resume after it was interrupted, never writes anything twice. --since, --until and
+    --calendar move only part of it; everything is still saved in the backup.
     """
+    selection = _selection(since, until, calendars or [])
     if resume_from is not None:
-        _resume(resume_from, target, domain, report_dir, dry_run=dry_run, yes=yes, source=source)
+        _resume(
+            resume_from,
+            target,
+            domain,
+            report_dir,
+            dry_run=dry_run,
+            yes=yes,
+            source=source,
+            selection=selection,
+        )
         return
     repeat: str | None = None
     if source is None and target is None:
@@ -171,7 +212,16 @@ def command(
             raise typer.Exit(EXIT_ERROR) from exc
         source, target = chosen_source.spec, chosen_target.spec
         domain = domain or "calendar"
-        repeat = wizard.command_line(chosen_source, chosen_target)
+        if selection is None:
+            try:
+                since, until = wizard.date_range()
+            except typer.Abort:
+                console.print("\nCancelled: nothing was written.")
+                raise typer.Exit(EXIT_CANCELLED) from None
+            selection = _selection(since, until, calendars or [])
+        repeat = wizard.command_line(
+            chosen_source, chosen_target, since=since, until=until, calendars=calendars or []
+        )
         endpoints = (chosen_source, chosen_target)
     elif source is None or target is None:
         missing = "--from" if source is None else "--to"
@@ -192,6 +242,7 @@ def command(
             dry_run=dry_run,
             confirm=_confirmer(dry_run=dry_run, yes=yes),
             progress=_progress,
+            selection=selection,
         )
     except (ConnectorError, MigrationError) as exc:
         console.print(f"[red]✗ {exc}[/red]")
@@ -203,6 +254,14 @@ def command(
     except KeyboardInterrupt:
         _stopped(bundle_path)
     _finish(result, report_dir, dry_run=dry_run, repeat=repeat)
+
+
+def _selection(since: str | None, until: str | None, calendars: list[str]) -> Selection | None:
+    try:
+        return make_selection(since, until, calendars)
+    except SelectionError as exc:
+        console.print(f"[red]✗ {exc}[/red]")
+        raise typer.Exit(EXIT_ERROR) from None
 
 
 def _progress(message: str) -> None:
@@ -246,6 +305,7 @@ def _resume(
     dry_run: bool,
     yes: bool,
     source: str | None,
+    selection: Selection | None,
 ) -> None:
     if source is not None:
         console.print("[red]✗ --resume reads from the backup: leave out --from.[/red]")
@@ -271,6 +331,7 @@ def _resume(
             dry_run=dry_run,
             confirm=_confirmer(dry_run=dry_run, yes=yes),
             progress=_progress,
+            selection=selection,
         )
     except (ConnectorError, MigrationError, ProgressError, BundleError) as exc:
         console.print(f"[red]✗ {exc}[/red]")

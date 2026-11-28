@@ -5,6 +5,7 @@ import pytest
 from typer.testing import CliRunner, Result
 
 from tests.conftest import make_event
+from tests.core.test_selection import calendar_source
 from usmp.cli import migrate as migrate_cli
 from usmp.cli.app import app
 from usmp.connectors.jsondir import JsonDirConnector, _JsonDirWriter
@@ -288,4 +289,41 @@ def test_errors_exit_2(tmp_path: Path, args: list[str], message: str) -> None:
     result = runner.invoke(app, ["migrate", *args, "--bundle", str(tmp_path / "b.usmp")])
 
     assert result.exit_code == migrate_cli.EXIT_ERROR, result.output
+    assert message in result.output
+
+
+def test_since_and_calendar_move_only_part(tmp_path: Path) -> None:
+    source = calendar_source(tmp_path)
+    args = ["--from", f"ics:path={source.config['path']}", "--to", f"ics:path={tmp_path / 'new'}"]
+    args += ["--bundle", str(tmp_path / "b.usmp"), "--report-dir", str(tmp_path / "reports")]
+
+    result = runner.invoke(
+        app, ["migrate", *args, "--since", "2026-01-01", "--calendar", "work", "--yes"]
+    )
+
+    assert result.exit_code == 0, result.output
+    output = " ".join(result.output.split())
+    assert "Only: from 2026-01-01; calendars: work" in output
+    assert "3 item(s) left out (they stay in the backup)" in output
+    assert "3 item(s) were outside the chosen selection" in output
+    [markdown] = (tmp_path / "reports").glob("*.md")
+    assert "| Selection | from 2026-01-01; calendars: work |" in markdown.read_text()
+
+    again = runner.invoke(
+        app, ["migrate", "--resume", str(tmp_path / "b.usmp"), "--until", "2026-12-31", "--yes"]
+    )
+    assert again.exit_code == 2
+    assert "different selection" in again.output
+
+
+@pytest.mark.parametrize(
+    ("args", "message"),
+    [
+        (["--since", "tomorrow"], "'tomorrow' is not a date"),
+        (["--since", "2026-02-01", "--until", "2026-01-01"], "since must be earlier than until"),
+    ],
+)
+def test_bad_selection_is_explained(tmp_path: Path, args: list[str], message: str) -> None:
+    result = runner.invoke(app, ["migrate", "--from", "ics:path=x", "--to", "ics:path=y", *args])
+    assert result.exit_code == 2
     assert message in result.output

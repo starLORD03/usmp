@@ -37,6 +37,9 @@ never changed, and a backup of everything is saved before anything is written.
     Apple ID email: you@icloud.com
       Password: ****-****-****-****
       Save it in your system keychain for next time? [Y/n]:
+
+    Which events? Recurring events are always moved whole. ...
+    Only events in this date range (press Enter to skip):
     ```
 
 4. **Read the preview.** It lists how many calendars and events will move and anything that
@@ -82,6 +85,26 @@ $ usmp migrate --from 'google:account=you@gmail.com' \
 
 Add `--dry-run` to preview only, or `--yes` to skip the confirmation (for scripts).
 
+## Moving only part of your calendar
+
+Answer the wizard's date question, or add these to the command:
+
+| Add | Moves |
+|---|---|
+| `--since 2025-01-01` | events that end on or after 1 January 2025 |
+| `--until 2025-12-31` | events that start on or before 31 December 2025 (the whole day counts) |
+| `--calendar Work` | only the calendar called Work (repeat for more: `--calendar Work --calendar Family`) |
+
+```console
+$ usmp migrate --from 'google:account=you@gmail.com' \
+    --to 'caldav:url=https://caldav.icloud.com,username=you@icloud.com' \
+    --since 2025-01-01 --calendar Work
+```
+
+A recurring event that has *any* occurrence in the range is moved whole, with every change made
+to single occurrences, so no series is ever cut in two. The backup still holds everything, and
+the report says how many items were left out. Those are not counted as missing.
+
 ## If it stops halfway
 
 A lost connection, a closed laptop or Ctrl+C can stop a migration while it is writing. Nothing
@@ -93,7 +116,8 @@ $ usmp migrate --resume usmp-calendar-20261128-101500.usmp
 
 It continues from the backup (your old calendar is not read again), skips everything already in
 the new calendar, and verifies the lot. Running the whole migration again is also safe: events
-that are already there are recognised and never written twice.
+that are already there are recognised and never written twice. A resumed migration keeps the
+date range and calendars it started with.
 
 ## If something goes wrong
 
@@ -104,6 +128,8 @@ that are already there are recognised and never written twice.
 | `Error 403: access_denied` in the browser | Add your Google account as a test user of your OAuth client. |
 | `event … already exists in the target calendar` | That calendar already has an event with the same id that USMP did not write. Nothing was overwritten. |
 | "N item(s) were already in the target" | You ran this migration before. Those items were checked, not written again. |
+| `no calendar named 'X'; available: …` | Use one of the names listed with `--calendar` (case doesn't matter). |
+| `nothing matches the selection` | No event falls in that date range or those calendars; widen it. |
 | "Migration NOT fully verified" | Open the report: it lists each event that didn't match. The backup has the originals. |
 
 Every error before writing ends with "Nothing was written to the target", so it's always safe to
