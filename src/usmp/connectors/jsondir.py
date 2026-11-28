@@ -20,6 +20,9 @@ from usmp.sdk.connector import (
     ConnectorError,
     ExportRecord,
     Reader,
+    Removal,
+    RemovalOutcome,
+    RemovalResult,
     Writer,
     WriteResult,
 )
@@ -77,6 +80,9 @@ class JsonDirConnector(Connector):
 
     def open_writer(self) -> Writer:
         return _JsonDirWriter(self.path)
+
+
+_OTHER_ITEM = "a different item is there"
 
 
 def _load(path: Path, native_id: str) -> Item:
@@ -146,6 +152,27 @@ class _JsonDirWriter(Writer):
                 Path(tmp).unlink(missing_ok=True)
                 raise
             yield WriteResult(usmp_id=item.usmp_id, native_id=native_id)
+
+    def remove(self, domain: str, removals: Sequence[Removal]) -> Iterator[RemovalResult]:
+        for removal in removals:
+            path = self._root / f"{removal.native_id}.json"
+            if not _NATIVE_ID.fullmatch(removal.native_id) or not path.is_file():
+                yield RemovalResult(removal.usmp_id, RemovalOutcome.ALREADY_GONE)
+                continue
+            item = _load(path, removal.native_id)
+            if item.usmp_id != removal.usmp_id or item.domain != domain:
+                yield RemovalResult(
+                    removal.usmp_id, RemovalOutcome.KEPT, "a different item is there"
+                )
+            elif any(
+                _load(other, f"{other.parent.name}/{other.stem}").parent == item.usmp_id
+                for other in self._root.glob("*/*.json")
+                if other != path and _NATIVE_ID.fullmatch(f"{other.parent.name}/{other.stem}")
+            ):
+                yield RemovalResult(removal.usmp_id, RemovalOutcome.KEPT, "it still holds items")
+            else:
+                path.unlink()
+                yield RemovalResult(removal.usmp_id, RemovalOutcome.REMOVED)
 
     def read_back(self, domain: str, native_ids: Sequence[str]) -> Iterator[Item]:
         for native_id in native_ids:

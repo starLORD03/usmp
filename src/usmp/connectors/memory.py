@@ -23,6 +23,9 @@ from usmp.sdk.connector import (
     ConnectorError,
     ExportRecord,
     Reader,
+    Removal,
+    RemovalOutcome,
+    RemovalResult,
     Writer,
     WriteResult,
 )
@@ -127,6 +130,22 @@ class _MemoryWriter(Writer):
             native_id = f"mem-{len(self._c.items) + 1}"
             self._c.items[native_id] = _restamp(item, native_id, cap.writable(item.payload))
             yield WriteResult(usmp_id=item.usmp_id, native_id=native_id)
+
+    def remove(self, domain: str, removals: Sequence[Removal]) -> Iterator[RemovalResult]:
+        for removal in removals:
+            self._c.calls.append(f"remove:{removal.usmp_id}")
+            item = self._c.items.get(removal.native_id)
+            if item is None or item.domain != domain:
+                yield RemovalResult(removal.usmp_id, RemovalOutcome.ALREADY_GONE)
+            elif item.usmp_id != removal.usmp_id:
+                yield RemovalResult(
+                    removal.usmp_id, RemovalOutcome.KEPT, "a different item is there"
+                )
+            elif any(other.parent == item.usmp_id for other in self._c.items.values()):
+                yield RemovalResult(removal.usmp_id, RemovalOutcome.KEPT, "it still holds items")
+            else:
+                del self._c.items[removal.native_id]
+                yield RemovalResult(removal.usmp_id, RemovalOutcome.REMOVED)
 
     def read_back(self, domain: str, native_ids: Sequence[str]) -> Iterator[Item]:
         self._c.calls.append(f"read_back:{domain}")

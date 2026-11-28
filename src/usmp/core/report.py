@@ -1,10 +1,16 @@
-"""Render verification reports and previews as JSON, Markdown and HTML."""
+"""Render verification reports and previews as JSON, Markdown and HTML, and undo reports."""
 
 import html
 from collections import Counter
 from pathlib import Path
 
-from usmp.core.models import ItemStatus, LossRecord, VerificationReport
+from usmp.core.models import (
+    ItemStatus,
+    LossRecord,
+    UndoOutcome,
+    UndoReport,
+    VerificationReport,
+)
 
 STATUS_LABELS = {
     ItemStatus.VERIFIED: "Verified",
@@ -229,6 +235,56 @@ def write_reports(report: VerificationReport, directory: Path) -> list[Path]:
         stem.with_suffix(".json"): report.model_dump_json(indent=2) + "\n",
         stem.with_suffix(".md"): to_markdown(report),
         stem.with_suffix(".html"): to_html(report),
+    }
+    for path, text in outputs.items():
+        path.write_text(text, encoding="utf-8")
+    return list(outputs)
+
+
+UNDO_LABELS = {
+    UndoOutcome.REMOVED: "Removed",
+    UndoOutcome.ALREADY_GONE: "Already gone",
+    UndoOutcome.KEPT: "Kept",
+}
+LEFT_ALONE = "item(s) were already on the target before the migration, so undo never touched them."
+
+
+def undo_markdown(report: UndoReport) -> str:
+    """The undo report as Markdown: totals, then every kept item with the reason."""
+    target = report.target.display_name + (
+        f" ({report.target.label})" if report.target.label else ""
+    )
+    lines = [
+        f"# USMP undo report: {report.domain}",
+        "",
+        f"- **Target:** {target}",
+        f"- **Migration from:** {report.migration_source.display_name}",
+        f"- **Run:** `{report.run_id}` ({report.started_at:%Y-%m-%d %H:%M:%S} UTC)",
+        f"- **Result:** {'finished' if report.ok else 'stopped early'}",
+        "",
+        "| Outcome | Items |",
+        "|---|---|",
+    ]
+    counts = Counter(r.outcome for r in report.items)
+    lines += [f"| {label} | {counts.get(outcome, 0)} |" for outcome, label in UNDO_LABELS.items()]
+    if report.summary.left_alone:
+        lines += ["", f"{report.summary.left_alone} {LEFT_ALONE}"]
+    kept = [r for r in report.items if r.outcome is UndoOutcome.KEPT]
+    if kept:
+        lines += ["", "## Kept", "", "| Item | Type | Why |", "|---|---|---|"]
+        lines += [f"| `{r.target_native_id}` | {r.type} | {r.reason or ''} |" for r in kept]
+    if report.errors:
+        lines += ["", "## Errors", ""] + [f"- {e}" for e in report.errors]
+    return "\n".join(lines) + "\n"
+
+
+def write_undo_report(report: UndoReport, directory: Path) -> list[Path]:
+    """Write ``report`` as JSON and Markdown into ``directory``."""
+    directory.mkdir(parents=True, exist_ok=True)
+    stem = directory / f"usmp-undo-{report.started_at:%Y%m%d-%H%M%S}-{report.run_id[:8]}"
+    outputs = {
+        stem.with_suffix(".json"): report.model_dump_json(indent=2) + "\n",
+        stem.with_suffix(".md"): undo_markdown(report),
     }
     for path, text in outputs.items():
         path.write_text(text, encoding="utf-8")

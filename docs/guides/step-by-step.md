@@ -121,6 +121,28 @@ the new calendar, and verifies the lot. Running the whole migration again is als
 that are already there are recognised and never written twice. A resumed migration keeps the
 date range and calendars it started with.
 
+## Taking a migration back
+
+Changed your mind, or moved into the wrong account? Undo removes what the migration created, and
+nothing else:
+
+```console
+$ usmp undo usmp-calendar-20261128-101500.usmp --dry-run   # see what would go
+$ usmp undo usmp-calendar-20261128-101500.usmp
+```
+
+It uses the backup and the progress record next to it, and goes to the same place the migration
+went to (you're asked to confirm first). It leaves alone:
+
+* events that were already in the new calendar before the migration;
+* events changed there since the migration, and events you added yourself;
+* a recurring event when one of its occurrences was changed (the whole series stays);
+* calendars that still hold anything afterwards, and calendars you merged into with "Put
+  everything into one existing calendar".
+
+The undo report lists everything that was kept and why, so you can remove it by hand if you want.
+Your old calendar is never touched, and the backup still holds every original.
+
 ## If something goes wrong
 
 | You see | What to do |
@@ -132,6 +154,7 @@ date range and calendars it started with.
 | "N item(s) were already in the target" | You ran this migration before. Those items were checked, not written again. |
 | `no calendar named 'X'; available: …` | Use one of the names listed with `--calendar` (case doesn't matter). |
 | `nothing matches the selection` | No event falls in that date range or those calendars; widen it. |
+| `no record of what this migration wrote` (undo) | The `.progress.jsonl` file next to the backup is missing. Without it USMP cannot tell its events from yours, so it removes nothing. |
 | `… kept failing; try again later` | The service stayed busy or unreachable after several tries over a few minutes. Wait a while, then run the `usmp migrate --resume …` command shown. |
 | "Migration NOT fully verified" | Open the report: it lists each event that didn't match. The backup has the originals. |
 

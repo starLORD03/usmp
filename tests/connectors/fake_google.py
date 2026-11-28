@@ -30,6 +30,7 @@ class FakeGoogle:
         # (path suffix, status): refuse the next matching write without carrying it out.
         self.refuse: list[tuple[str, int]] = []
         self._n = 0
+        self._etags = 0
         self.mock = responses.RequestsMock(assert_all_requests_are_fired=False)
         for method in ("GET", "POST", "PUT", "PATCH", "DELETE"):
             self.mock.add_callback(
@@ -76,11 +77,14 @@ class FakeGoogle:
             if path.endswith(suffix) and request.method != "GET":
                 del self.refuse[n]
                 return refused, {}, "backend error"
-        status, payload = self._route(request.method, path, query, body)
+        if_match = request.headers.get("If-Match")
+        status, payload = self._route(request.method, path, query, body, if_match)
         for n, (suffix, lost) in enumerate(self.lose_answers):
             if path.endswith(suffix) and request.method != "GET":
                 del self.lose_answers[n]
                 return lost, {}, "backend error"
+        if payload is None:
+            return status, {}, ""
         return status, {"Content-Type": "application/json"}, json.dumps(payload)
 
     def _page(self, items: list[dict[str, Any]], query: dict[str, str]) -> dict[str, Any]:
@@ -90,7 +94,13 @@ class FakeGoogle:
             page["nextPageToken"] = str(start + PAGE)
         return page
 
-    def _route(self, method: str, path: str, query: dict[str, str], body: Any) -> tuple[int, Any]:
+    def edit_event(self, cal_id: str, event_id: str, **changes: Any) -> None:
+        """Change an event as its owner would in Google Calendar (a new ETag)."""
+        self._store(cal_id, {**self.events[cal_id][event_id], **changes})
+
+    def _route(
+        self, method: str, path: str, query: dict[str, str], body: Any, if_match: str | None = None
+    ) -> tuple[int, Any]:
         if method == "GET" and path == "/users/me/calendarList":
             return 200, self._page(list(self.calendars.values()), query)
         if method == "GET" and path == "/calendars/primary":
@@ -105,12 +115,39 @@ class FakeGoogle:
         if m and method == "PATCH":
             self.calendars[m[1]].update(body)
             return 200, self.calendars[m[1]]
+        m = re.fullmatch(r"/calendars/([^/]+)", path)
+        if m and method == "DELETE":
+            if m[1] not in self.calendars:
+                return 404, {"error": "not found"}
+            del self.calendars[m[1]], self.events[m[1]]
+            return 204, None
         m = re.fullmatch(r"/calendars/([^/]+)/events", path)
         if m and method == "GET":
-            return 200, self._page(list(self.events[m[1]].values()), query)
+            if m[1] not in self.events:
+                return 404, {"error": "not found"}
+            found = [
+                ev for ev in self.events[m[1]].values()
+                if query.get("iCalUID") in (None, ev.get("iCalUID"))
+            ]  # fmt: skip
+            if "maxResults" in query:
+                found = found[: int(query["maxResults"])]
+            return 200, self._page(found, query)
         m = re.fullmatch(r"/calendars/([^/]+)/events/import", path)
         if m and method == "POST":
             return self._import(m[1], self._like_google(body, query))
+        m = re.fullmatch(r"/calendars/([^/]+)/events/([^/]+)", path)
+        if m and method in ("GET", "DELETE") and m[2] != "import":
+            ev = self.events.get(m[1], {}).get(m[2])
+            if ev is None:
+                return 404, {"error": "not found"}
+            if method == "GET":
+                return 200, ev
+            if if_match and if_match != ev.get("etag"):
+                return 412, {"error": "precondition failed"}
+            for other in list(self.events[m[1]].values()):
+                if other["id"] == m[2] or other.get("recurringEventId") == m[2]:
+                    del self.events[m[1]][other["id"]]
+            return 204, None
         m = re.fullmatch(r"/calendars/([^/]+)/events/([^/]+)_([0-9TZ]+)", path)
         if m and method == "PUT":
             return self._update_instance(m[1], m[2], m[3], self._like_google(body, query))
@@ -144,6 +181,8 @@ class FakeGoogle:
         ev = copy.deepcopy(ev)
         ev.setdefault("status", "confirmed")
         ev.setdefault("organizer", {"email": cal_id, "self": True})
+        self._etags += 1
+        ev["etag"] = f'"{self._etags}"'
         if ev.get("transparency") == "opaque":
             del ev["transparency"]  # Google omits the default
         self.events[cal_id][ev["id"]] = ev

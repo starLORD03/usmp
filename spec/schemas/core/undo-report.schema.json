@@ -1,0 +1,220 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://starlord03.github.io/usmp/schemas/core/undo-report.schema.json",
+  "$defs": {
+    "ConnectorInfo": {
+      "additionalProperties": false,
+      "properties": {
+        "connector": {
+          "description": "Lower-case identifier: letters, digits and underscores; starts with a letter.",
+          "maxLength": 64,
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "title": "Connector",
+          "type": "string"
+        },
+        "display_name": {
+          "title": "Display Name",
+          "type": "string"
+        },
+        "label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Human label for the account or location, e.g. `work calendar`. Must never contain credentials.",
+          "title": "Label"
+        }
+      },
+      "required": [
+        "connector",
+        "display_name"
+      ],
+      "title": "ConnectorInfo",
+      "type": "object"
+    },
+    "UndoItemResult": {
+      "additionalProperties": false,
+      "properties": {
+        "usmp_id": {
+          "description": "Stable item identifier, derived from the connector and native id it was first read from.",
+          "pattern": "^usmp:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          "title": "Usmp Id",
+          "type": "string"
+        },
+        "type": {
+          "description": "Lower-case identifier: letters, digits and underscores; starts with a letter.",
+          "maxLength": 64,
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "title": "Type",
+          "type": "string"
+        },
+        "target_native_id": {
+          "title": "Target Native Id",
+          "type": "string"
+        },
+        "outcome": {
+          "$ref": "#/$defs/UndoOutcome"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Why the item was kept, e.g. it was changed after the migration.",
+          "title": "Reason"
+        }
+      },
+      "required": [
+        "usmp_id",
+        "type",
+        "target_native_id",
+        "outcome"
+      ],
+      "title": "UndoItemResult",
+      "type": "object"
+    },
+    "UndoOutcome": {
+      "enum": [
+        "removed",
+        "already_gone",
+        "kept"
+      ],
+      "title": "UndoOutcome",
+      "type": "string"
+    },
+    "UndoSummary": {
+      "additionalProperties": false,
+      "properties": {
+        "total": {
+          "description": "Items the migration created on the target.",
+          "minimum": 0,
+          "title": "Total",
+          "type": "integer"
+        },
+        "removed": {
+          "minimum": 0,
+          "title": "Removed",
+          "type": "integer"
+        },
+        "already_gone": {
+          "minimum": 0,
+          "title": "Already Gone",
+          "type": "integer"
+        },
+        "kept": {
+          "minimum": 0,
+          "title": "Kept",
+          "type": "integer"
+        },
+        "left_alone": {
+          "default": 0,
+          "description": "Items that were already on the target before the migration: never touched and not counted in `total`.",
+          "minimum": 0,
+          "title": "Left Alone",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "total",
+        "removed",
+        "already_gone",
+        "kept"
+      ],
+      "title": "UndoSummary",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "The outcome of undoing a migration (spec §8.3): what was removed and what was kept.",
+  "properties": {
+    "report_version": {
+      "const": 1,
+      "default": 1,
+      "title": "Report Version",
+      "type": "integer"
+    },
+    "run_id": {
+      "minLength": 1,
+      "title": "Run Id",
+      "type": "string"
+    },
+    "started_at": {
+      "format": "date-time",
+      "title": "Started At",
+      "type": "string"
+    },
+    "finished_at": {
+      "format": "date-time",
+      "title": "Finished At",
+      "type": "string"
+    },
+    "domain": {
+      "description": "Lower-case identifier: letters, digits and underscores; starts with a letter.",
+      "maxLength": 64,
+      "pattern": "^[a-z][a-z0-9_]*$",
+      "title": "Domain",
+      "type": "string"
+    },
+    "target": {
+      "$ref": "#/$defs/ConnectorInfo"
+    },
+    "migration_source": {
+      "$ref": "#/$defs/ConnectorInfo",
+      "description": "Where the undone migration read from."
+    },
+    "bundle_items_sha256": {
+      "description": "`items_sha256` of the migration's backup.",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Bundle Items Sha256",
+      "type": "string"
+    },
+    "summary": {
+      "$ref": "#/$defs/UndoSummary"
+    },
+    "items": {
+      "items": {
+        "$ref": "#/$defs/UndoItemResult"
+      },
+      "title": "Items",
+      "type": "array"
+    },
+    "errors": {
+      "description": "Problems that stopped part of the undo.",
+      "items": {
+        "type": "string"
+      },
+      "title": "Errors",
+      "type": "array"
+    },
+    "ok": {
+      "description": "True when no errors occurred. Kept items are not errors: they were left on purpose.",
+      "readOnly": true,
+      "title": "Ok",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "run_id",
+    "started_at",
+    "finished_at",
+    "domain",
+    "target",
+    "migration_source",
+    "bundle_items_sha256",
+    "summary",
+    "items",
+    "ok"
+  ],
+  "title": "UndoReport",
+  "type": "object"
+}

@@ -22,6 +22,9 @@ from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
 from usmp.connectors._ical import (
+    NOT_EMPTY,
+    NOT_MARKED,
+    SHARED_SERIES,
     Converter,
     drop_backwards_end,
     event_payload,
@@ -46,6 +49,9 @@ from usmp.sdk.connector import (
     ConnectorError,
     ExportRecord,
     Reader,
+    Removal,
+    RemovalOutcome,
+    RemovalResult,
     Writer,
     WriteResult,
 )
@@ -159,11 +165,14 @@ class _Api:
         params: Mapping[str, Any] | None = None,
         body: Any = None,
         recover: Callable[[], Any] | None = None,
+        headers: Mapping[str, str] | None = None,
+        statuses: frozenset[int] = frozenset(),
     ) -> Any:
         """Send one request, retrying rate limits, busy servers and dropped connections.
 
         ``recover`` looks for the result of an earlier try of a create whose answer never
-        arrived. Without it, a create is only retried when Google said it did nothing.
+        arrived. Without it, a create is only retried when Google said it did nothing. An answer
+        whose status is in ``statuses`` is returned as that number instead of raising an error.
         """
         if self._read_only and method != "GET":
             raise ConnectorError(f"blocked a {method} request: this source is read-only")
@@ -173,7 +182,9 @@ class _Api:
 
         def attempt() -> Any:
             try:
-                response = self._session.request(method, url, params=params, json=body, timeout=60)
+                response = self._session.request(
+                    method, url, params=params, json=body, headers=headers, timeout=60
+                )
             except OSError as exc:
                 return self._unclear(f"cannot reach Google Calendar: {exc}", None, unclear,
                                      repeatable or recover is not None)  # fmt: skip
@@ -188,6 +199,8 @@ class _Api:
             if status in _UNCLEAR_STATUS:
                 return self._unclear(f"Google Calendar error {status}", wait, unclear,
                                      repeatable or recover is not None, text)  # fmt: skip
+            if status in statuses:
+                return status
             if status == 409 and unclear and recover is not None:
                 found = recover()
                 if found is not None:
@@ -762,7 +775,7 @@ class _GoogleWriter(Writer):
                     if key in item.payload
                 ]
             by_source[item.usmp_id] = cal_id
-            yield WriteResult(item.usmp_id, cal_id, tuple(losses))
+            yield WriteResult(item.usmp_id, cal_id, tuple(losses), created=merged is None)
 
         masters = self._masters
         ordered = sorted(
@@ -816,6 +829,83 @@ class _GoogleWriter(Writer):
             losses = [_import_loss(item, f, d) for f, d in changed]
             yield WriteResult(item.usmp_id, f"{cal_id}/{saved['id']}", tuple(losses))
 
+    def remove(self, domain: str, removals: Sequence[Removal]) -> Iterator[RemovalResult]:
+        if domain != "calendar":
+            return
+        checked: dict[str, tuple[str, dict[str, Any]]] = {}  # usmp_id -> (calendar, event)
+        for removal in removals:
+            if removal.type != "event":
+                continue
+            cal_id, event_id = removal.native_id.split("/", 1)
+            ev = self._api.call("GET", f"{_events_path(cal_id)}/{quote(event_id, safe='')}",
+                                statuses=_GONE)  # fmt: skip
+            if _deleted(ev):
+                yield RemovalResult(removal.usmp_id, RemovalOutcome.ALREADY_GONE)
+            elif _marker(ev) != removal.usmp_id:
+                yield RemovalResult(removal.usmp_id, RemovalOutcome.KEPT, NOT_MARKED)
+            else:
+                checked[removal.usmp_id] = (cal_id, ev)
+        done: set[str] = set()
+        for usmp_id, (cal_id, ev) in checked.items():
+            if "recurringEventId" not in ev:
+                for result in self._remove_series(cal_id, ev, usmp_id, set(checked)):
+                    done.add(result.usmp_id)
+                    yield result
+        for usmp_id in checked:
+            if usmp_id not in done:  # a changed occurrence of a series that stays
+                yield RemovalResult(usmp_id, RemovalOutcome.KEPT, SHARED_SERIES)
+        for removal in removals:
+            if removal.type == "calendar":
+                yield self._remove_calendar(removal)
+
+    def _remove_series(
+        self, cal_id: str, master: dict[str, Any], usmp_id: str, removable: set[str]
+    ) -> Iterator[RemovalResult]:
+        """Delete an event with its changed occurrences, if USMP wrote all of them."""
+        params = {"iCalUID": master.get("iCalUID"), "showDeleted": "false"}
+        parts = [
+            ev for ev in self._api.pages(_events_path(cal_id), params)
+            if ev.get("recurringEventId") == master["id"] and ev.get("status") != "cancelled"
+        ]  # fmt: skip
+        markers = {_marker(ev) for ev in parts}
+        group = [usmp_id, *sorted(m for m in markers if m)]
+        if not markers <= removable:
+            for member in group:
+                if member in removable:
+                    yield RemovalResult(member, RemovalOutcome.KEPT, SHARED_SERIES)
+            return
+        path = f"{_events_path(cal_id)}/{quote(master['id'], safe='')}"
+        status = self._api.call(
+            "DELETE",
+            path,
+            headers={"If-Match": master["etag"]} if master.get("etag") else None,
+            statuses=_GONE | {412},
+        )
+        # A retried delete whose first try went through also fails its If-Match.
+        if status == 412 and not _deleted(self._api.call("GET", path, statuses=_GONE)):
+            for member in group:
+                yield RemovalResult(member, RemovalOutcome.KEPT, "it changed while undoing")
+            return
+        for member in group:
+            yield RemovalResult(member, RemovalOutcome.REMOVED)
+
+    def _remove_calendar(self, removal: Removal) -> RemovalResult:
+        if not removal.created:
+            return RemovalResult(
+                removal.usmp_id, RemovalOutcome.KEPT, "the migration did not create this calendar"
+            )
+        cal_id = removal.native_id
+        found = self._api.call("GET", _events_path(cal_id),
+                               params={"maxResults": 1, "showDeleted": "false"},
+                               statuses=_GONE)  # fmt: skip
+        if isinstance(found, int):
+            return RemovalResult(removal.usmp_id, RemovalOutcome.ALREADY_GONE)
+        if found.get("items"):
+            return RemovalResult(removal.usmp_id, RemovalOutcome.KEPT, NOT_EMPTY)
+        status = self._api.call("DELETE", f"/calendars/{quote(cal_id, safe='')}", statuses=_GONE)
+        outcome = RemovalOutcome.ALREADY_GONE if status in _GONE else RemovalOutcome.REMOVED
+        return RemovalResult(removal.usmp_id, outcome)
+
     def _finder(self, cal_id: str, uid: str, usmp_id: str) -> Callable[[], Any]:
         """Find the series this run imported, if a try whose answer was lost stored it."""
 
@@ -843,6 +933,17 @@ class _GoogleWriter(Writer):
             for record in _records_for_calendar(self._api, entry):
                 if record.item.source.native_id in wanted:
                     yield record.item
+
+
+_GONE = frozenset({404, 410})
+
+
+def _deleted(event: Any) -> bool:
+    return isinstance(event, int) or event.get("status") == "cancelled"
+
+
+def _events_path(cal_id: str) -> str:
+    return f"/calendars/{quote(cal_id, safe='')}/events"
 
 
 def _import_loss(

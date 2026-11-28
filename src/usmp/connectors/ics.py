@@ -11,6 +11,7 @@ anything else is converted to UTC and reported as a ``value_converted`` loss.
 import os
 import re
 import tempfile
+from collections import defaultdict
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -20,17 +21,22 @@ import icalendar
 
 from usmp.connectors._ical import (
     HEX_COLOR,
+    NOT_EMPTY,
+    NOT_MARKED,
     USMP_ID,
     USMP_ID_PATTERN,
     build_vcalendar,
     calendar_capabilities,
     event_records,
+    holds_items,
     marked_events,
     parse_vcalendar,
     recurrence_key,
+    removable_events,
     resolve_zone,
     unstorable_fields,
     vevent,
+    without_events,
 )
 from usmp.core.models import (
     CapabilityManifest,
@@ -45,6 +51,9 @@ from usmp.sdk.connector import (
     ConnectorError,
     ExportRecord,
     Reader,
+    Removal,
+    RemovalOutcome,
+    RemovalResult,
     Writer,
     WriteResult,
 )
@@ -224,7 +233,7 @@ class _IcsWriter(Writer):
             if item.type == "calendar":
                 path = self._new_file(files, str(item.payload["name"]))
                 files[item.usmp_id] = _PendingFile(path, item.payload, item.usmp_id)
-                results.append(WriteResult(usmp_id=item.usmp_id, native_id=path.name))
+                results.append(WriteResult(item.usmp_id, path.name, created=True))
                 continue
             if item.parent in self._present:
                 raise ConnectorError(
@@ -250,16 +259,80 @@ class _IcsWriter(Writer):
         # Only report items once their file is safely on disk.
         yield from results
 
+    @property
+    def _base(self) -> Path:
+        return self._path.parent if self._single else self._path
+
+    def remove(self, domain: str, removals: Sequence[Removal]) -> Iterator[RemovalResult]:
+        if domain != "calendar":
+            return
+        events: dict[str, list[Removal]] = defaultdict(list)
+        for removal in removals:
+            if removal.type == "event":
+                events[removal.native_id.split("#", 1)[0]].append(removal)
+        for name, group in sorted(events.items()):
+            yield from self._remove_events(self._base / name, group)
+        for removal in removals:
+            if removal.type == "calendar":
+                yield self._remove_file(removal)
+            elif removal.type != "event":
+                yield RemovalResult(removal.usmp_id, RemovalOutcome.KEPT, "not a calendar item")
+
+    def _remove_events(self, path: Path, group: Sequence[Removal]) -> Iterator[RemovalResult]:
+        if not path.is_file():
+            for removal in group:
+                yield RemovalResult(removal.usmp_id, RemovalOutcome.ALREADY_GONE)
+            return
+        original = path.read_bytes()
+        cal = parse_vcalendar(original, str(path))
+
+        def native_id(uid: str, rid: str | None) -> str:
+            return f"{path.name}#{uid}" + (f"#{rid}" if rid else "")
+
+        drop, outcomes = removable_events(cal, group, native_id)
+        if drop:
+            _replace(path, original, without_events(cal, drop).to_ical())
+        yield from outcomes.values()
+
+    def _remove_file(self, removal: Removal) -> RemovalResult:
+        path = self._base / removal.native_id
+        if not path.is_file():
+            return RemovalResult(removal.usmp_id, RemovalOutcome.ALREADY_GONE)
+        data = path.read_bytes()
+        cal = parse_vcalendar(data, str(path))
+        if str(cal.get(USMP_ID) or "") != removal.usmp_id:
+            return RemovalResult(removal.usmp_id, RemovalOutcome.KEPT, NOT_MARKED)
+        if holds_items(cal):
+            return RemovalResult(removal.usmp_id, RemovalOutcome.KEPT, NOT_EMPTY)
+        if path.read_bytes() != data:
+            raise ConnectorError(f"{path} changed while undoing; nothing more was removed")
+        path.unlink()
+        return RemovalResult(removal.usmp_id, RemovalOutcome.REMOVED)
+
     def read_back(self, domain: str, native_ids: Sequence[str]) -> Iterator[Item]:
         wanted = set(native_ids)
         files = {n.split("#", 1)[0] for n in wanted}
-        base = self._path.parent if self._single else self._path
+        base = self._base
         for name in sorted(files):
             path = base / name
             if path.is_file():
                 for record in _read_file(path):
                     if record.item.source.native_id in wanted:
                         yield record.item
+
+
+def _replace(path: Path, expected: bytes, data: bytes) -> None:
+    """Atomically replace ``path`` with ``data``, unless it no longer holds ``expected``."""
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".tmp-", suffix=".ics")
+    try:
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(data)
+        if path.read_bytes() != expected:
+            raise ConnectorError(f"{path} changed while undoing; nothing more was removed")
+        Path(tmp).replace(path)
+    except BaseException:
+        Path(tmp).unlink(missing_ok=True)
+        raise
 
 
 def _write_file(pending: _PendingFile) -> None:

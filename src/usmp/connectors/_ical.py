@@ -9,6 +9,7 @@ import binascii
 import hashlib
 import json
 import re
+from collections import defaultdict
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta, tzinfo
@@ -28,7 +29,13 @@ from usmp.core.models import (
 )
 from usmp.domains.calendar import event_item
 from usmp.domains.calendar.model import Calendar, Event
-from usmp.sdk.connector import ConnectorError, ExportRecord
+from usmp.sdk.connector import (
+    ConnectorError,
+    ExportRecord,
+    Removal,
+    RemovalOutcome,
+    RemovalResult,
+)
 
 USMP_ID = "X-USMP-ID"
 """Marks a VEVENT (or a VCALENDAR file) with the ``usmp_id`` it was written from, so re-runs can
@@ -630,6 +637,70 @@ def marked_events(
         marker = ev.get(USMP_ID)
         if marker is not None and USMP_ID_PATTERN.fullmatch(str(marker)):
             yield str(marker), native_id_for(str(ev.get("UID") or ""), recurrence_key(ev))
+
+
+NOT_MARKED = "it no longer carries USMP's mark"
+SHARED_SERIES = "it is part of a recurring event that also holds something USMP is not removing"
+NOT_EMPTY = "it still holds events"
+
+
+def removable_events(
+    vcalendar: Any,
+    removals: Sequence[Removal],
+    native_id_for: Callable[[str, str | None], str],
+) -> tuple[set[str], dict[str, RemovalResult]]:
+    """Which events of ``vcalendar`` may go: the UIDs to drop, and an outcome per removal.
+
+    A recurring event and its changed occurrences share a UID, so they go together or not at
+    all: only when every VEVENT with that UID carries the USMP marker of an item being removed.
+    Outcomes of ``REMOVED`` are what will happen once the caller has stored the change.
+    """
+    by_native: dict[str, Any] = {}
+    groups: dict[str, list[Any]] = defaultdict(list)
+    for ev in vcalendar.walk("VEVENT"):
+        uid = str(ev.get("UID") or "")
+        by_native[native_id_for(uid, recurrence_key(ev))] = ev
+        groups[uid].append(ev)
+    outcomes: dict[str, RemovalResult] = {}
+    pending: dict[str, str] = {}  # usmp_id -> UID
+    for removal in removals:
+        ev = by_native.get(removal.native_id)
+        if ev is None:
+            outcomes[removal.usmp_id] = RemovalResult(removal.usmp_id, RemovalOutcome.ALREADY_GONE)
+        elif str(ev.get(USMP_ID) or "") != removal.usmp_id:
+            outcomes[removal.usmp_id] = RemovalResult(
+                removal.usmp_id, RemovalOutcome.KEPT, NOT_MARKED
+            )
+        else:
+            pending[removal.usmp_id] = str(ev.get("UID") or "")
+    drop: set[str] = set()
+    for uid in sorted(set(pending.values())):
+        asked = {usmp_id for usmp_id, g in pending.items() if g == uid}
+        whole = all(str(ev.get(USMP_ID) or "") in asked for ev in groups[uid])
+        if whole:
+            drop.add(uid)
+        for usmp_id in asked:
+            outcomes[usmp_id] = (
+                RemovalResult(usmp_id, RemovalOutcome.REMOVED)
+                if whole
+                else RemovalResult(usmp_id, RemovalOutcome.KEPT, SHARED_SERIES)
+            )
+    return drop, outcomes
+
+
+def without_events(vcalendar: Any, uids: set[str]) -> Any:
+    """A copy of ``vcalendar`` without the VEVENTs whose UID is in ``uids``."""
+    copy = icalendar.Calendar.from_ical(vcalendar.to_ical())
+    copy.subcomponents = [
+        c for c in copy.subcomponents
+        if not (c.name == "VEVENT" and str(c.get("UID") or "") in uids)
+    ]  # fmt: skip
+    return copy
+
+
+def holds_items(vcalendar: Any) -> bool:
+    """Whether ``vcalendar`` holds anything but time zone definitions."""
+    return any(c.name != "VTIMEZONE" for c in vcalendar.subcomponents)
 
 
 def parse_vcalendar(data: bytes | str, where: str) -> Any:
