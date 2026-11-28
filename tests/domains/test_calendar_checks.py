@@ -84,7 +84,7 @@ def test_event_ending_before_it_starts_is_moved_without_its_end(tmp_path: Path) 
         "DTEND;TZID=Europe/Paris:20260302T080000", "SUMMARY:Broken", "END:VEVENT",
         "END:VCALENDAR", "",
     ]  # fmt: skip
-    (tmp_path / "in.ics").write_text("\r\n".join(lines))
+    (tmp_path / "in.ics").write_bytes("\r\n".join(lines).encode())
 
     result = migrate(
         IcsConnector({"path": str(tmp_path / "in.ics")}),
