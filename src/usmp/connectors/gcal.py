@@ -27,6 +27,7 @@ from usmp.connectors._ical import (
     event_payload,
     local_time,
     notes_with_conferences,
+    notes_without_conferences,
     parse_vcalendar,
     resolve_zone,
 )
@@ -101,7 +102,12 @@ _GUEST_KEY = "usmp_added_guest"
 # Google adds the names of booked rooms to an event's location; the location as written is kept
 # here so readers can restore it (unless someone has edited the location since).
 _LOCATION_KEY = "usmp_location"
-_MARKERS = (_USMP_KEY, _GUEST_KEY, _LOCATION_KEY)
+# Meeting links Google cannot attach (Zoom, Teams, …) go into the notes, and rooms become resources;
+# the originals are kept here so readers return them exactly.
+_CONFERENCES_KEY = "usmp_conferences"
+_ROOMS_KEY = "usmp_rooms"
+_MARKER_LIMIT = 1024  # Google's limit on one extended property value
+_MARKERS = (_USMP_KEY, _GUEST_KEY, _LOCATION_KEY, _CONFERENCES_KEY, _ROOMS_KEY)
 _ENTRY_FEATURES = {"video": ["video"], "phone": ["phone"], "sip": ["audio"]}
 
 
@@ -316,7 +322,9 @@ class _EventConverter:
                 "name": organizer.get("displayName"),
             }
         attendees = []
-        added = ((ev.get("extendedProperties") or {}).get("private") or {}).get(_GUEST_KEY)
+        marks = (ev.get("extendedProperties") or {}).get("private") or {}
+        added = marks.get(_GUEST_KEY)
+        rooms = set(str(marks.get(_ROOMS_KEY) or "").split(",")) - {""}
         for att in ev.get("attendees", []):
             if added and att.get("email") == added:
                 continue
@@ -326,7 +334,8 @@ class _EventConverter:
             attendees.append(
                 {
                     "email": att["email"],
-                    "kind": "resource" if att.get("resource") else "individual",
+                    "kind": ("room" if att["email"] in rooms else "resource")
+                    if att.get("resource") else "individual",
                     "name": att.get("displayName"),
                     "role": "optional" if att.get("optional") else "required",
                     "status": {"needsAction": "needs_action", "accepted": "accepted",
@@ -352,6 +361,14 @@ class _EventConverter:
             for a in ev.get("attachments", []) if a.get("fileUrl")
         ]  # fmt: skip
         payload["conferences"] = _conferences(ev)
+        private = (ev.get("extendedProperties") or {}).get("private") or {}
+        kept = _json_list(private.get(_CONFERENCES_KEY))
+        if kept is not None:
+            payload["conferences"] = kept
+            notes = notes_without_conferences(payload.get("description"), kept)
+            payload.pop("description", None)
+            if notes:
+                payload["description"] = notes
         google = {k: v for k, v in ev.items() if k not in _MAPPED}
         _drop_marker(google)
         if google.get("eventType") == "default":
@@ -364,6 +381,17 @@ def _marker(ev: Mapping[str, Any]) -> str | None:
     """The ``usmp_id`` a USMP run stored on this event, if any."""
     value = ((ev.get("extendedProperties") or {}).get("private") or {}).get(_USMP_KEY)
     return str(value) if value else None
+
+
+def _json_list(value: object) -> list[Any] | None:
+    """A JSON list USMP stored in an extended property, or ``None`` if absent or damaged."""
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = json.loads(value)
+    except ValueError:
+        return None
+    return parsed if isinstance(parsed, list) else None
 
 
 def _written_location(ev: Mapping[str, Any]) -> str | None:
@@ -506,6 +534,10 @@ def _ical_time(value: str) -> str:
     return value.replace("-", "").replace(":", "")
 
 
+_LINKS_IN_NOTES = "join links were added to the event notes"
+_ROOMS_AS_RESOURCES = "Google stores rooms as resources"
+
+
 def _google_event(payload: Mapping[str, Any]) -> tuple[dict[str, Any], list[tuple[str, str]]]:
     """Google event resource for ``payload`` and ``(field, detail)`` for anything changed."""
     changed: list[tuple[str, str]] = []
@@ -552,7 +584,7 @@ def _google_event(payload: Mapping[str, Any]) -> tuple[dict[str, Any], list[tupl
         if kind in ("group", "unknown"):
             changed.append(("attendees", f"{att['email']}: Google has no {kind} attendees"))
         elif kind == "room":
-            changed.append(("attendees", f"{att['email']}: Google stores rooms as resources"))
+            changed.append(("attendees", f"{att['email']}: {_ROOMS_AS_RESOURCES}"))
         role = att.get("role", "required")
         if role in _ROLE_LOSS:
             changed.append(("attendees", f"{att['email']}: Google has no {role} role"))
@@ -581,7 +613,30 @@ def _google_event(payload: Mapping[str, Any]) -> tuple[dict[str, Any], list[tupl
         overrides = overrides[:5]
     ev["reminders"] = {"useDefault": False, "overrides": overrides}
     changed += _restore_provider_data(payload, ev)
-    return ev, changed
+    return ev, _keep_originals(payload, ev, changed)
+
+
+def _keep_originals(
+    payload: Mapping[str, Any], ev: dict[str, Any], changed: list[tuple[str, str]]
+) -> list[tuple[str, str]]:
+    """Store what Google changes (links in the notes, rooms as resources) so it reads back exactly.
+
+    Only when it fits in one extended property; otherwise the change stays declared.
+    """
+    marks: dict[str, str] = {}
+    if any(f == "conferences" for f, _ in changed):
+        value = json.dumps(payload["conferences"], separators=(",", ":"), ensure_ascii=False)
+        if len(value) <= _MARKER_LIMIT:
+            marks[_CONFERENCES_KEY] = value
+            changed = [(f, d) for f, d in changed if d != _LINKS_IN_NOTES]
+    rooms = [a["email"] for a in payload.get("attendees", []) if a.get("kind") == "room"]
+    if rooms and len(value := ",".join(rooms)) <= _MARKER_LIMIT:
+        marks[_ROOMS_KEY] = value
+        changed = [(f, d) for f, d in changed if not d.endswith(_ROOMS_AS_RESOURCES)]
+    if marks:
+        props = ev.setdefault("extendedProperties", {})
+        props["private"] = {**props.get("private", {}), **marks}
+    return changed
 
 
 def _restore_provider_data(payload: Mapping[str, Any], ev: dict[str, Any]) -> list[tuple[str, str]]:
@@ -611,9 +666,9 @@ def _restore_provider_data(payload: Mapping[str, Any], ev: dict[str, Any]) -> li
         notes = notes_with_conferences(payload.get("description"), conferences)
         if notes is not None:
             ev["description"] = notes
-        changed.append(("conferences", "join links were added to the event notes"))
+        changed.append(("conferences", _LINKS_IN_NOTES))
         if notes != payload.get("description"):
-            changed.append(("description", "join links were added to the event notes"))
+            changed.append(("description", _LINKS_IN_NOTES))
     return changed
 
 
@@ -751,16 +806,7 @@ class _GoogleWriter(Writer):
                 cal_id, name = merged, self._only or ""
             else:
                 cal_id, name = self._create_calendar(existing, item.payload)
-            losses = []
-            if name != item.payload["name"]:
-                losses.append(_import_loss(item, "name", f"stored as {name!r}", Severity.INFO))
-            if merged is not None:
-                # Merging never changes the existing calendar's own settings.
-                losses += [
-                    _import_loss(item, key, f"merged into the existing calendar {name!r}")
-                    for key in ("description", "color", "time_zone")
-                    if key in item.payload
-                ]
+            losses = _calendar_losses(item, name, merged=merged is not None)
             by_source[item.usmp_id] = cal_id
             yield WriteResult(item.usmp_id, cal_id, tuple(losses))
 
@@ -843,6 +889,21 @@ class _GoogleWriter(Writer):
             for record in _records_for_calendar(self._api, entry):
                 if record.item.source.native_id in wanted:
                     yield record.item
+
+
+def _calendar_losses(item: Item, name: str, *, merged: bool) -> list[LossRecord]:
+    """What storing calendar ``item`` as the calendar ``name`` changes."""
+    losses = []
+    if name != item.payload["name"]:
+        losses.append(_import_loss(item, "name", f"stored as {name!r}", Severity.INFO))
+    if merged:
+        # Merging never changes the existing calendar's own settings.
+        losses += [
+            _import_loss(item, key, f"merged into the existing calendar {name!r}")
+            for key in ("description", "color", "time_zone")
+            if key in item.payload
+        ]
+    return losses
 
 
 def _import_loss(
@@ -932,6 +993,15 @@ class GoogleCalendarConnector(Connector):
     def open_reader(self) -> Reader:
         session = type(self).session_for(self.require("account"), False)()
         return _GoogleReader(_Api(session, read_only=True), self.config.get("calendar"))
+
+    def expected_losses(self, items: Sequence[Item]) -> Iterator[LossRecord]:
+        only = self.config.get("calendar")
+        for item in items:
+            if item.domain == "calendar" and item.type == "event":
+                for key, detail in _google_event(item.payload)[1]:
+                    yield _import_loss(item, key, detail)
+            elif item.domain == "calendar" and item.type == "calendar" and only:
+                yield from _calendar_losses(item, only, merged=True)
 
     def open_writer(self) -> Writer:
         session = type(self).session_for(self.require("account"), True)()

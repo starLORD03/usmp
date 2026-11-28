@@ -213,6 +213,10 @@ def _choose(
     return chosen, [loss for loss in losses if loss.usmp_id in kept], len(items) - len(chosen)
 
 
+def _loss_key(loss: LossRecord) -> tuple[str, str, str, str, str | None]:
+    return (loss.usmp_id, loss.field, loss.reason, loss.stage, loss.detail)
+
+
 def _differs(a: object, b: object) -> bool:
     return canonical_json(a) != canonical_json(b)
 
@@ -313,7 +317,9 @@ def _write_and_verify(
         errors.append(f"cannot open {target.display_name} for writing: {exc}")
 
     import_losses = [loss for r in results.values() for loss in r.losses]
-    all_losses = [*preview.losses, *import_losses]
+    # Losses the preview already showed (Connector.expected_losses) are listed once.
+    shown = {_loss_key(x) for x in preview.losses}
+    all_losses = [*preview.losses, *(x for x in import_losses if _loss_key(x) not in shown)]
     lost_by_item: dict[str, set[str]] = defaultdict(set)
     for loss in all_losses:
         lost_by_item[loss.usmp_id].add(loss.field)
@@ -394,7 +400,11 @@ def migrate(
         source=source.info(),
         target=target.info(),
         counts=dict(Counter(i.type for i in items)),
-        losses=[*losses, *predict_losses(items, target_caps, domain)],
+        losses=[
+            *losses,
+            *predict_losses(items, target_caps, domain),
+            *target.expected_losses(items),
+        ],
         bundle=bundle.manifest,
         bundle_path=bundle_path,
         selection=selection,
@@ -485,7 +495,11 @@ def resume(
         source=manifest.source,
         target=target.info(),
         counts=dict(Counter(i.type for i in items)),
-        losses=[*export_losses, *predict_losses(items, target_caps, domain)],
+        losses=[
+            *export_losses,
+            *predict_losses(items, target_caps, domain),
+            *target.expected_losses(items),
+        ],
         bundle=manifest,
         bundle_path=bundle_path,
         selection=selection,

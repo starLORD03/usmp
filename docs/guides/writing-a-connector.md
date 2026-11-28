@@ -12,6 +12,7 @@ guide walks through building one and proving it follows the rules.
 | `open_writer()` → `Writer.write(items)` | Write items and yield the provider's id for each one as soon as it is stored (any order). |
 | `Writer.already_written(items, known)` *(optional)* | Find items an earlier run already wrote, so re-runs and resumed runs write nothing twice. |
 | `Writer.read_back(domain, ids)` | Return items as the provider now stores them, so USMP can verify them. |
+| `Connector.expected_losses(items)` *(optional)* | Return, without contacting the provider, the same `LossRecord`s your writer will declare, so the preview never promises more than you keep. |
 
 Anything you can't map into the canonical model must be reported as a `LossRecord` with reason
 `unsupported_by_canonical`. USMP never lets data disappear silently.

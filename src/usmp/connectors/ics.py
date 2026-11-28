@@ -310,5 +310,10 @@ class IcsConnector(Connector):
             raise ConnectorError(f"{self.display_name}: {path} does not exist")
         return _IcsReader(path)
 
+    def expected_losses(self, items: Sequence[Item]) -> Iterator[LossRecord]:
+        for item in items:
+            if item.domain == "calendar" and item.type == "event":
+                yield from _event_losses(item)
+
     def open_writer(self) -> Writer:
         return _IcsWriter(self.path)

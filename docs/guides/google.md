@@ -63,6 +63,11 @@ time zones.
 added to the end of the event notes ("Join online: https://meet.google.com/…"), so they show in
 Apple Calendar, Thunderbird and other apps that ignore `CONFERENCE`.
 
+**Meeting links from other apps** (Zoom, Teams, Webex, …) can't be attached as a Google meeting,
+so in Google Calendar they appear at the end of the notes. USMP also keeps the original links with
+the event, so moving out of Google again returns them as proper meeting links with the notes
+unchanged. Rooms show in Google as resources and come back as rooms.
+
 **Google-only details** — event colours, out-of-office, focus-time and birthday details,
 "Created from Gmail" links, add-on data and guest permissions — are kept with each event (as
 `X-USMP-PROVIDER-DATA` in iCalendar). Other apps ignore them, but migrating back into Google
@@ -73,7 +78,7 @@ Reported as **declared losses** (shown before you migrate):
 | Into Google | Why |
 |---|---|
 | Out-of-office, focus-time and birthday event types | Google only lets apps import ordinary events; the event itself is kept |
-| Meeting links from other apps (Zoom, Teams, …) | Google can only attach meetings it created; the links are added to the notes |
+| Meeting links from other apps (Zoom, Teams, …), only when an event has so many that they don't fit in Google's 1,024-character limit | Google can only attach meetings it created; the links are in the notes |
 | Group attendees | Google has no equivalent |
 | Attachments | Google only stores Google Drive files |
 | Chair and non-participant roles, delegated status | Google has no equivalent |

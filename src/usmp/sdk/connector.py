@@ -145,6 +145,14 @@ class Connector(ABC):
     def capabilities(self) -> CapabilityManifest:
         """What this connector can read and write, given its configuration."""
 
+    def expected_losses(self, items: Sequence[Item]) -> Iterator[LossRecord]:
+        """Losses writing ``items`` here would declare, worked out before anything is written.
+
+        Optional: the preview shows these so it never promises more than the writer keeps. They
+        must be the same records the writer later returns, without contacting the provider.
+        """
+        return iter(())
+
     def open_reader(self) -> Reader:
         raise ConnectorError(f"{self.display_name} cannot be used as a source")
 
