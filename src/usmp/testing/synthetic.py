@@ -12,6 +12,7 @@ import argparse
 import random
 from datetime import date, datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from usmp.core.models import Item
 from usmp.domains.calendar import calendar_item, event_item
@@ -95,11 +96,12 @@ def _event(n: int, rng: random.Random) -> dict[str, object]:
     else:
         payload["start"], payload["end"] = _timed(day, rng)
         payload["time_zone"] = rng.choice(ZONES)
-        if kind > 0.97:  # a flight: ends in another zone
-            payload["end_time_zone"] = rng.choice([z for z in ZONES if z != payload["time_zone"]])
-            payload["end"] = (
-                datetime.fromisoformat(str(payload["start"])) + timedelta(hours=9)
-            ).isoformat()
+        if kind > 0.97:  # a nine-hour flight: its end is local time where it lands
+            end_zone = rng.choice([z for z in ZONES if z != payload["time_zone"]])
+            start = datetime.fromisoformat(str(payload["start"]))
+            landing = start.replace(tzinfo=ZoneInfo(str(payload["time_zone"]))) + timedelta(hours=9)
+            payload["end_time_zone"] = end_zone
+            payload["end"] = landing.astimezone(ZoneInfo(end_zone)).replace(tzinfo=None).isoformat()
     if rng.random() < 0.5:
         payload["description"] = rng.choice(NOTES)
     if rng.random() < 0.4:
@@ -153,11 +155,13 @@ def calendar_items(
         payload["recurrence_rules"] = ["FREQ=DAILY;COUNT=10"]
         payload["excluded_dates"] = [(first + timedelta(days=2)).isoformat()]
         add(uid, payload)
-        series_only = ("recurrence_rules", "excluded_dates", "end")
+        series_only = ("recurrence_rules", "excluded_dates")
         moved = {k: v for k, v in payload.items() if k not in series_only}
+        length = datetime.fromisoformat(str(payload["end"])) - first
         moved["title"] = f"{payload['title']} (moved)"
         moved["recurrence_id"] = (first + timedelta(days=1)).isoformat()
         moved["start"] = (first + timedelta(days=1, hours=1)).isoformat()
+        moved["end"] = (first + timedelta(days=1, hours=1) + length).isoformat()
         add(f"{uid}#2", moved)
     return items
 

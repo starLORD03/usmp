@@ -7,8 +7,10 @@ and CalDAV against a real Radicale server. Real iCloud and Nextcloud accounts ar
 
 import os
 from collections.abc import Iterator
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -77,6 +79,21 @@ def test_synthetic_calendar_is_varied_and_stable() -> None:
     assert any("T" not in e["start"] for e in events), "all-day events"
     assert any(e.get("conferences") for e in events), "meeting links"
     assert any(a.get("kind") == "room" for e in events for a in e.get("attendees", [])), "rooms"
+
+
+def test_synthetic_events_end_after_they_start() -> None:
+    def instant(value: str, zone: str | None) -> datetime:
+        moment = datetime.fromisoformat(value)
+        return moment.replace(tzinfo=ZoneInfo(zone)) if zone else moment
+
+    for item in synthetic.calendar_items(EVENTS):
+        e: dict[str, Any] = dict(item.payload)
+        if item.type != "event" or "T" not in e["start"]:
+            continue
+        assert "end" in e, e["uid"]
+        start = instant(e["start"], e["time_zone"])
+        end = instant(e["end"], e.get("end_time_zone") or e["time_zone"])
+        assert timedelta(0) < end - start <= timedelta(hours=9), e["uid"]
 
 
 def test_ics_file_to_caldav(tmp_path: Path, caldav: CalDavConnector) -> None:
