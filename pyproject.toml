@@ -1,6 +1,6 @@
 [project]
 name = "usmp-protocol"
-version = "0.0.0"
+version = "0.1.0"
 description = "Universal Service Migration Protocol: move your data between services and platforms without losing it."
 readme = "README.md"
 license = "MIT"
