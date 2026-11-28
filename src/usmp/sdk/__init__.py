@@ -9,6 +9,7 @@ from usmp.sdk.connector import (
     Writer,
     WriteResult,
 )
+from usmp.sdk.retry import RetryPolicy, TransientError, parse_retry_after, retrying
 
 __all__ = [
     "Connector",
@@ -16,6 +17,10 @@ __all__ = [
     "ConnectorError",
     "ExportRecord",
     "Reader",
+    "RetryPolicy",
+    "TransientError",
     "WriteResult",
     "Writer",
+    "parse_retry_after",
+    "retrying",
 ]

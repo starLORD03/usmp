@@ -133,3 +133,32 @@ is not part of the item itself (an extended property, a hidden field, `X-USMP-ID
 and override `already_written` to look items up by it. Remember where already-present parents
 are, so that `write()` can put new children under them. Then set `finds_written = True` in your
 conformance test class to run `test_rerun_finds_written_items`.
+
+## 6. Retries and rate limits
+
+`usmp.sdk.retry` retries the requests you tell it are worth retrying, with exponential back-off,
+full jitter, the server's `Retry-After`, and limits on attempts and total waiting time:
+
+```python
+from usmp.sdk.retry import TransientError, parse_retry_after, retrying
+
+
+def get(session, url):
+    def attempt():
+        response = session.get(url)
+        if response.status_code in (429, 503):
+            wait = parse_retry_after(response.headers.get("Retry-After"))
+            raise TransientError(f"busy (HTTP {response.status_code})", retry_after=wait)
+        return response
+
+    return retrying(attempt, what="reading the calendar list")
+```
+
+Only you know which requests are safe to send twice. Reads are; so is a `PUT` of the same content
+to the same place, and a create the provider refuses to repeat (a conditional `PUT`, or an import
+keyed by UID). For any other create, retry only on answers that mean "not done" (429), or pass
+`before_retry=` a function that looks for your own earlier write by `usmp_id` and returns it if
+found. When a retried create is refused as a duplicate, check whether the duplicate is yours
+before reporting a conflict (spec §8.1).
+
+In tests, give your client a `RetryPolicy(sleep=lambda _seconds: None)` so retries happen at once.

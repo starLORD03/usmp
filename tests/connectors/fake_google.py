@@ -10,8 +10,11 @@ from urllib.parse import parse_qs, unquote, urlparse
 import requests
 import responses
 
+from usmp.sdk.retry import RetryPolicy
+
 API = "https://www.googleapis.com/calendar/v3"
 PAGE = 2  # small pages so pagination is always exercised
+NO_WAIT = RetryPolicy(sleep=lambda _seconds: None)  # retry at once in tests
 
 
 class FakeGoogle:
@@ -20,7 +23,12 @@ class FakeGoogle:
         self.calendars: dict[str, dict[str, Any]] = {}
         self.events: dict[str, dict[str, dict[str, Any]]] = {}
         self.log: list[tuple[str, str]] = []
-        self.fail_next: list[tuple[int, str]] = []
+        self.fail_next: list[tuple[int, str] | tuple[int, str, dict[str, str]]] = []
+        # (path suffix, status): carry out the next matching request, then answer with an error,
+        # as if the connection dropped after Google stored it.
+        self.lose_answers: list[tuple[str, int]] = []
+        # (path suffix, status): refuse the next matching write without carrying it out.
+        self.refuse: list[tuple[str, int]] = []
         self._n = 0
         self.mock = responses.RequestsMock(assert_all_requests_are_fired=False)
         for method in ("GET", "POST", "PUT", "PATCH", "DELETE"):
@@ -62,9 +70,17 @@ class FakeGoogle:
         body = json.loads(request.body) if request.body else None
         self.log.append((request.method, path))
         if self.fail_next:
-            status, text = self.fail_next.pop(0)
-            return status, {}, text
+            status, text, *headers = self.fail_next.pop(0)
+            return status, headers[0] if headers else {}, text
+        for n, (suffix, refused) in enumerate(self.refuse):
+            if path.endswith(suffix) and request.method != "GET":
+                del self.refuse[n]
+                return refused, {}, "backend error"
         status, payload = self._route(request.method, path, query, body)
+        for n, (suffix, lost) in enumerate(self.lose_answers):
+            if path.endswith(suffix) and request.method != "GET":
+                del self.lose_answers[n]
+                return lost, {}, "backend error"
         return status, {"Content-Type": "application/json"}, json.dumps(payload)
 
     def _page(self, items: list[dict[str, Any]], query: dict[str, str]) -> dict[str, Any]:
