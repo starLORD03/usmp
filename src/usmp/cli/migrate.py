@@ -21,7 +21,8 @@ from rich.progress import (
 from rich.table import Table
 
 from usmp.cli import wizard
-from usmp.core.bundle import BundleError, BundleReader
+from usmp.cli.passphrase import existing_passphrase, new_passphrase
+from usmp.core.bundle import BundleError, BundleReader, is_encrypted
 from usmp.core.engine import MigrationError, MigrationResult, Preview, migrate, resume
 from usmp.core.models import ItemStatus, Selection, VerificationReport
 from usmp.core.progress import ProgressError, progress_path, read_progress
@@ -66,6 +67,8 @@ def _show_preview(preview: Preview) -> None:
     console.print(f"  To:    {dst}")
     console.print("  Backup of the source:")
     console.print(f"  {preview.bundle_path}", soft_wrap=True, markup=False, highlight=False)
+    if preview.encrypted:
+        console.print("  [dim]Encrypted with your passphrase.[/dim]")
     if preview.selection is not None:
         console.print(f"  Only:  {preview.selection.describe()}", markup=False, highlight=False)
         console.print(
@@ -201,13 +204,31 @@ def command(
             dir_okay=False,
         ),
     ] = None,
+    encrypt: Annotated[
+        bool,
+        typer.Option(
+            "--encrypt",
+            help="Encrypt the backup with a passphrase (asked twice, or taken from "
+            "--passphrase-env). It can also be opened with the standard `age` tool.",
+        ),
+    ] = False,
+    passphrase_env: Annotated[
+        str | None,
+        typer.Option(
+            "--passphrase-env",
+            metavar="VAR",
+            help="Environment variable holding the backup passphrase, for scripts. Implies "
+            "--encrypt; with --resume, opens an encrypted backup.",
+        ),
+    ] = None,
 ) -> None:
     """Migrate data from a source to a target, then verify that it arrived intact.
 
     Run it without --from and --to to be guided step by step. The source is only ever read. A
     backup bundle of everything exported is saved first. Running the same migration again, or
     with --resume after it was interrupted, never writes anything twice. --since, --until and
-    --calendar move only part of it; everything is still saved in the backup.
+    --calendar move only part of it; everything is still saved in the backup. --encrypt protects
+    the backup with a passphrase.
     """
     selection = _selection(since, until, calendars or [])
     if resume_from is not None:
@@ -220,6 +241,7 @@ def command(
             yes=yes,
             source=source,
             selection=selection,
+            passphrase_env=passphrase_env,
         )
         return
     repeat: str | None = None
@@ -247,8 +269,19 @@ def command(
                 console.print("\nCancelled: nothing was written.")
                 raise typer.Exit(EXIT_CANCELLED) from None
             selection = _selection(since, until, calendars or [])
+        if not encrypt and passphrase_env is None:
+            try:
+                encrypt = wizard.encrypt_backup()
+            except typer.Abort:
+                console.print("\nCancelled: nothing was written.")
+                raise typer.Exit(EXIT_CANCELLED) from None
         repeat = wizard.command_line(
-            chosen_source, chosen_target, since=since, until=until, calendars=calendars or []
+            chosen_source,
+            chosen_target,
+            since=since,
+            until=until,
+            calendars=calendars or [],
+            encrypt=encrypt or passphrase_env is not None,
         )
         endpoints = (chosen_source, chosen_target)
     elif source is None or target is None:
@@ -258,6 +291,7 @@ def command(
     stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
     bundle_path = bundle or Path(f"usmp-{domain or 'export'}-{stamp}.usmp")
     try:
+        passphrase = new_passphrase(passphrase_env) if encrypt or passphrase_env else None
         if repeat is not None:
             src, dst = (registry.get(e.name)(e.config) for e in endpoints)
         else:
@@ -273,6 +307,7 @@ def command(
                 progress=_progress,
                 selection=selection,
                 advance=bar,
+                passphrase=passphrase,
             )
     except (ConnectorError, MigrationError) as exc:
         console.print(f"[red]✗ {exc}[/red]")
@@ -367,14 +402,18 @@ def _resume(
     yes: bool,
     source: str | None,
     selection: Selection | None,
+    passphrase_env: str | None = None,
 ) -> None:
     if source is not None:
         console.print("[red]✗ --resume reads from the backup: leave out --from.[/red]")
         raise typer.Exit(EXIT_ERROR)
     try:
+        passphrase = (
+            existing_passphrase(bundle_path, passphrase_env) if is_encrypted(bundle_path) else None
+        )
         record = read_progress(bundle_path)
         if domain is None:
-            domain = record[0].domain if record else _bundle_domain(bundle_path)
+            domain = record[0].domain if record else _bundle_domain(bundle_path, passphrase)
         if target is not None:
             dst = _connector(target, domain)
         elif record is not None:
@@ -395,6 +434,7 @@ def _resume(
                 progress=_progress,
                 selection=selection,
                 advance=bar,
+                passphrase=passphrase,
             )
     except (ConnectorError, MigrationError, ProgressError, BundleError) as exc:
         console.print(f"[red]✗ {exc}[/red]")
@@ -408,8 +448,8 @@ def _resume(
     _finish(result, report_dir, dry_run=dry_run, repeat=None)
 
 
-def _bundle_domain(bundle_path: Path) -> str | None:
-    with BundleReader(bundle_path) as bundle:
+def _bundle_domain(bundle_path: Path, passphrase: str | None) -> str | None:
+    with BundleReader(bundle_path, passphrase=passphrase) as bundle:
         domains = {c.domain for c in bundle.manifest.counts}
     return domains.pop() if len(domains) == 1 else None
 

@@ -1,6 +1,7 @@
 """Render verification reports and previews as JSON, Markdown and HTML."""
 
 import html
+import os
 from collections import Counter
 from pathlib import Path
 
@@ -35,6 +36,13 @@ REASON_LABELS = {
 }
 
 
+def backup_label(report: VerificationReport) -> str:
+    """How the backup of this run is stored."""
+    if report.backup_encrypted:
+        return "encrypted with a passphrase"
+    return "not encrypted (anyone who can read the file can read the calendar)"
+
+
 def summarize_losses(losses: list[LossRecord]) -> list[tuple[str, str, str, int]]:
     """Group losses into ``(field, reason, severity, item count)`` rows, most severe first."""
     order = {"error": 0, "warning": 1, "info": 2}
@@ -67,6 +75,7 @@ def to_markdown(report: VerificationReport) -> str:
         f"| Finished | {report.finished_at:%Y-%m-%d %H:%M:%S %Z} |",
         f"| Run id | `{report.run_id}` |",
         *([f"| Selection | {report.selection.describe()} |"] if report.selection else []),
+        *([f"| Backup | {backup_label(report)} |"] if report.backup_encrypted is not None else []),
         "",
         "## Summary",
         "",
@@ -158,6 +167,7 @@ def to_html(report: VerificationReport) -> str:
         row("Finished", e(f"{report.finished_at:%Y-%m-%d %H:%M:%S %Z}")),
         row("Run id", f"<code>{e(report.run_id)}</code>"),
         *([row("Selection", e(report.selection.describe()))] if report.selection else []),
+        *([row("Backup", e(backup_label(report)))] if report.backup_encrypted is not None else []),
         "</table><h2>Summary</h2><table>",
         "<tr><th>Status</th><th class='num'>Items</th></tr>",
         row(STATUS_LABELS[ItemStatus.VERIFIED], str(s.verified), num=1),
@@ -222,8 +232,12 @@ def to_html(report: VerificationReport) -> str:
 
 
 def write_reports(report: VerificationReport, directory: Path) -> list[Path]:
-    """Write ``report`` as JSON, Markdown and HTML into ``directory``."""
-    directory.mkdir(parents=True, exist_ok=True)
+    """Write ``report`` as JSON, Markdown and HTML into ``directory``.
+
+    Reports can name calendars and attendees, so they are readable by their owner only, like the
+    backup bundle.
+    """
+    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
     stem = directory / f"usmp-report-{report.started_at:%Y%m%d-%H%M%S}-{report.run_id[:8]}"
     outputs = {
         stem.with_suffix(".json"): report.model_dump_json(indent=2) + "\n",
@@ -231,5 +245,7 @@ def write_reports(report: VerificationReport, directory: Path) -> list[Path]:
         stem.with_suffix(".html"): to_html(report),
     }
     for path, text in outputs.items():
-        path.write_text(text, encoding="utf-8")
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(text)
     return list(outputs)

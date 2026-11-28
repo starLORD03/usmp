@@ -1,4 +1,8 @@
+import os
+import stat
 from pathlib import Path
+
+import pytest
 
 from tests.conftest import make_capabilities, make_event
 from usmp.connectors.memory import MemoryConnector
@@ -65,3 +69,40 @@ def test_summarize_losses_orders_by_severity(tmp_path: Path) -> None:
     rows = summarize_losses(lossy_report(tmp_path).losses)
 
     assert rows == [("location", "unsupported_by_target", "warning", 2)]
+
+
+@pytest.mark.parametrize(
+    ("encrypted", "shown"),
+    [(True, "encrypted with a passphrase"), (False, "not encrypted"), (None, None)],
+)
+def test_backup_encryption_is_stated(
+    tmp_path: Path, encrypted: bool | None, shown: str | None
+) -> None:
+    from tests.core.test_resume import source, target
+    from usmp.core.engine import migrate
+    from usmp.core.report import write_reports
+
+    result = migrate(source(), target(), bundle_path=tmp_path / "b.usmp")
+    assert result.report is not None
+    report = result.report.model_copy(update={"backup_encrypted": encrypted})
+    for path in write_reports(report, tmp_path / "r"):
+        text = path.read_text()
+        if path.suffix == ".json":
+            continue
+        if shown is None:
+            assert "Backup" not in text
+        else:
+            assert shown in text
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX file modes")
+def test_reports_are_private(tmp_path: Path) -> None:
+    from tests.core.test_resume import source, target
+    from usmp.core.engine import migrate
+    from usmp.core.report import write_reports
+
+    result = migrate(source(), target(), bundle_path=tmp_path / "b.usmp")
+    assert result.report is not None
+    for path in write_reports(result.report, tmp_path / "new-dir"):
+        assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    assert stat.S_IMODE((tmp_path / "new-dir").stat().st_mode) & 0o077 == 0

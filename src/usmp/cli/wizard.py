@@ -253,6 +253,20 @@ def date_range() -> tuple[str | None, str | None]:
         return since, until
 
 
+def encrypt_backup() -> bool:
+    """Ask whether to encrypt the backup with a passphrase."""
+    console.print(
+        "\n[bold]Backup:[/bold] a full copy of your calendar is saved on this computer before "
+        "anything is written."
+    )
+    return bool(typer.confirm("Protect the backup with a passphrase?", default=False))
+
+
+def _quoted(value: str) -> str:
+    """``value`` in single quotes, safe to paste into a POSIX shell even if it contains one."""
+    return "'" + value.replace("'", "'\"'\"'") + "'"
+
+
 def command_line(
     source: Endpoint,
     target: Endpoint,
@@ -260,8 +274,9 @@ def command_line(
     since: str | None = None,
     until: str | None = None,
     calendars: list[str] | None = None,
+    encrypt: bool = False,
 ) -> str:
-    """The non-interactive command for the same migration."""
+    """The non-interactive command for the same migration (never with the passphrase itself)."""
     extra = "".join(
         f" {flag} {shlex.quote(value)}"
         for flag, value in [
@@ -271,4 +286,7 @@ def command_line(
         ]
         if value
     )
-    return f"usmp migrate --from '{source.spec}' --to '{target.spec}' --domain calendar{extra}"
+    if encrypt:
+        extra += " --encrypt"
+    endpoints = f"--from {_quoted(source.spec)} --to {_quoted(target.spec)}"
+    return f"usmp migrate {endpoints} --domain calendar{extra}"

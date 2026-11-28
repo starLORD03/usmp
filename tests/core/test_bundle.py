@@ -1,4 +1,5 @@
 import json
+import os
 import stat
 import zipfile
 from pathlib import Path
@@ -6,7 +7,14 @@ from pathlib import Path
 import pytest
 
 from tests.conftest import make_event
-from usmp.core.bundle import BundleError, BundleReader, BundleWriter, Limits
+from usmp.core.bundle import (
+    BundleError,
+    BundleLockedError,
+    BundleReader,
+    BundleWriter,
+    Limits,
+    is_encrypted,
+)
 from usmp.core.models import CapabilityManifest, ConnectorInfo, LossReason, LossRecord
 
 
@@ -270,3 +278,67 @@ class TestUnsafeOrInvalidArchives:
             r._infos["losses.json"].file_size -= 1  # simulate a header that under-reports
             with pytest.raises(BundleError, match="corrupt"):
                 r.losses()
+
+
+PASSPHRASE = "correct horse battery"  # noqa: S105 - test value
+WRONG = "not the right one"
+SHORT = "short"
+
+
+class TestEncryption:
+    @pytest.fixture
+    def locked(
+        self, tmp_path: Path, source_info: ConnectorInfo, capabilities: CapabilityManifest
+    ) -> Path:
+        path = tmp_path / "locked.usmp"
+        with BundleWriter(
+            path, source=source_info, capabilities=capabilities, passphrase=PASSPHRASE
+        ) as w:
+            w.add_item(make_event("1"))
+        return path
+
+    def test_round_trip_with_the_passphrase(self, locked: Path) -> None:
+        assert locked.read_bytes().startswith(b"age-encryption.org/v1\n")
+        assert b"demo" not in locked.read_bytes(), "nothing readable without the passphrase"
+        assert is_encrypted(locked)
+        with BundleReader(locked, passphrase=PASSPHRASE) as r:
+            assert r.encrypted
+            assert len(list(r.iter_items())) == 1
+            assert r.validate() == []
+        if os.name != "nt":  # POSIX file modes
+            assert stat.S_IMODE(locked.stat().st_mode) & 0o077 == 0, "owner only"
+
+    def test_no_passphrase_is_refused_not_guessed(self, locked: Path) -> None:
+        with pytest.raises(BundleLockedError, match="encrypted: give its passphrase"):
+            BundleReader(locked)
+
+    def test_wrong_passphrase(self, locked: Path) -> None:
+        with pytest.raises(BundleError, match="wrong passphrase, or the backup is damaged"):
+            BundleReader(locked, passphrase=WRONG)
+
+    def test_damaged_encrypted_bundle(self, locked: Path) -> None:
+        data = bytearray(locked.read_bytes())
+        data[-5] ^= 0xFF
+        locked.write_bytes(bytes(data))
+        with pytest.raises(BundleError, match="wrong passphrase, or the backup is damaged"):
+            BundleReader(locked, passphrase=PASSPHRASE)
+
+    def test_plain_bundle_ignores_a_passphrase(self, bundle: Path) -> None:
+        assert not is_encrypted(bundle)
+        with BundleReader(bundle, passphrase=PASSPHRASE) as r:
+            assert not r.encrypted
+
+    def test_short_passphrase_is_refused(
+        self, tmp_path: Path, source_info: ConnectorInfo, capabilities: CapabilityManifest
+    ) -> None:
+        path = tmp_path / "x.usmp"
+        with (
+            pytest.raises(ValueError, match="at least 8 characters"),
+            BundleWriter(path, source=source_info, capabilities=capabilities, passphrase=SHORT),
+        ):
+            pass
+        assert not path.exists()
+
+    def test_too_large_to_decrypt(self, locked: Path) -> None:
+        with pytest.raises(BundleError, match="too large"):
+            BundleReader(locked, passphrase=PASSPHRASE, limits=Limits(max_total_bytes=10))

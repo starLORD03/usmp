@@ -887,9 +887,11 @@ def session_factory(account: str, *, write: bool) -> Callable[[], Any]:
         transport = _require_google()
         from google.oauth2.credentials import Credentials
 
-        stored = credentials.get_secret(NAME, token_account(account, write))
+        key = token_account(account, write)
+        stored = credentials.get_secret(NAME, key)
         if stored is None and not write:
-            stored = credentials.get_secret(NAME, token_account(account, True))
+            key = token_account(account, True)  # a write sign-in can also read
+            stored = credentials.get_secret(NAME, key)
         if stored is None:
             flag = " --write" if write else ""
             raise ConnectorError(
@@ -903,7 +905,8 @@ def session_factory(account: str, *, write: bool) -> Callable[[], Any]:
                 creds.refresh(transport.Request())
             except Exception as exc:  # google-auth raises several unrelated types
                 raise ConnectorError(f"cannot refresh the Google sign-in: {exc}") from exc
-            credentials.set_secret(NAME, token_account(account, write), creds.to_json())
+            # Save it where it came from: a write token must never be filed as a read-only one.
+            credentials.set_secret(NAME, key, creds.to_json())
         return transport.AuthorizedSession(creds)
 
     return make

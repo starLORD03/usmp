@@ -15,6 +15,7 @@ that could change data. As a target, it creates new calendars (or uses the one n
 
 import contextlib
 import hashlib
+import ipaddress
 from collections import defaultdict
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
@@ -66,6 +67,18 @@ class _UsmpId(ValuedBaseElement):
     """A WebDAV property marking a calendar USMP created with the calendar's ``usmp_id``."""
 
     tag = "{https://github.com/starLORD03/usmp}usmp-id"
+
+
+def _is_loopback(host: str | None) -> bool:
+    """True for this computer (localhost, 127.0.0.0/8, ::1)."""
+    if host is None:
+        return False
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
 
 
 @contextlib.contextmanager
@@ -499,6 +512,8 @@ class CalDavConnector(Connector):
         "calendar": "only read this calendar / write everything into this calendar",
         "password_env": "environment variable that holds the password (else the OS keychain)",
         "workers": f"events uploaded at once into new calendars (default {DEFAULT_WORKERS})",
+        "allow_http": "yes to use a plain http:// server on your own network (sends the password "
+        "unencrypted); http:// to this computer is always allowed",
     }
 
     @property
@@ -527,8 +542,19 @@ class CalDavConnector(Connector):
 
     def _client(self, cls: type[DAVClient]) -> DAVClient:
         url = self.require("url")
-        if urlparse(url).scheme not in ("http", "https"):
+        parsed = urlparse(url)
+        if parsed.scheme not in ("http", "https"):
             raise ConnectorError(f"{self.display_name}: url must start with https://")
+        if (
+            parsed.scheme == "http"
+            and not _is_loopback(parsed.hostname)
+            and self.config.get("allow_http", "").lower() not in ("yes", "true", "1")
+        ):
+            raise ConnectorError(
+                f"{self.display_name}: {parsed.hostname} would receive your password unencrypted "
+                "over http://. Use https://, or add allow_http=yes if this server is on your own "
+                "network"
+            )
         return cls(url=url, username=self.require("username"), password=self._password())
 
     def info(self) -> Any:

@@ -29,6 +29,12 @@ password in an environment variable and pass `password_env=VAR_NAME`.
 | Fastmail | `https://caldav.fastmail.com/dav/` | your Fastmail email |
 | Radicale | `http://localhost:5232/` | your Radicale user |
 
+Addresses must start with `https://`, so your password is never sent unencrypted. Plain
+`http://` works only for a server on this computer (`localhost`). For a server on your own
+network without HTTPS, add `allow_http=yes` (for example
+`caldav:url=http://192.168.1.10/remote.php/dav,username=me,allow_http=yes`); anyone on that
+network could then read the password.
+
 ## Examples
 
 ```console

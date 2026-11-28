@@ -298,3 +298,28 @@ def test_merge_mode_leaves_existing_calendar_settings_alone(radicale: tuple[str,
     [home] = [r.item.payload for r in connector(url, user).open_reader().read("calendar")]
     assert home == {"name": "Home", "color": "#111111", "description": "Mine"}
     assert {loss.field for loss in result.losses} == {"name", "color", "description"}
+
+
+@pytest.mark.parametrize(
+    ("url", "extra", "allowed"),
+    [
+        ("http://127.0.0.1:5232/", {}, True),
+        ("http://localhost:5232/", {}, True),
+        ("http://[::1]:5232/", {}, True),
+        ("http://192.168.1.10/remote.php/dav", {}, False),
+        ("http://dav.example/", {}, False),
+        ("http://192.168.1.10/remote.php/dav", {"allow_http": "yes"}, True),
+        ("https://dav.example/", {}, True),
+    ],
+)
+def test_plain_http_only_to_this_computer_unless_allowed(
+    url: str, extra: dict[str, str], allowed: bool
+) -> None:
+    from caldav.davclient import DAVClient
+
+    conn = connector(url, "me", **extra)
+    if allowed:
+        conn._client(DAVClient)
+    else:
+        with pytest.raises(ConnectorError, match="unencrypted over http://"):
+            conn._client(DAVClient)

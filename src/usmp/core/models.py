@@ -447,6 +447,11 @@ class VerificationReport(_Model):
         description="Odd things in the source data, such as an event that ends before it starts. "
         "Those items were migrated as they are; warnings do not affect `ok`.",
     )
+    backup_encrypted: bool | None = Field(
+        default=None,
+        description="Whether the backup bundle of this run is encrypted with a passphrase "
+        "(spec §7.1); absent in reports from versions that could not encrypt.",
+    )
 
     @computed_field  # type: ignore[prop-decorator]
     @property

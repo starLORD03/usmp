@@ -399,3 +399,101 @@ def test_progress_bar_closes_when_writing_stops(monkeypatch: pytest.MonkeyPatch)
     assert bar._bar is not None
     bar.close()
     assert bar._bar is None
+
+
+PASSPHRASE = "correct horse battery"  # noqa: S105 - test value
+
+
+def test_encrypted_migration_from_a_script(
+    tmp_path: Path, source_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("BACKUP_PASS", PASSPHRASE)
+
+    result = invoke(tmp_path, source_dir, "--yes", "--passphrase-env", "BACKUP_PASS")
+
+    assert result.exit_code == migrate_cli.EXIT_OK, result.output
+    assert "Encrypted with your passphrase" in text(result)
+    assert (tmp_path / "backup.usmp").read_bytes().startswith(b"age-encryption.org/v1\n")
+    assert PASSPHRASE not in text(result)
+    [md] = (tmp_path / "reports").glob("*.md")
+    assert "encrypted with a passphrase" in md.read_text()
+
+
+def test_encrypt_without_a_terminal_needs_the_env_option(tmp_path: Path, source_dir: Path) -> None:
+    result = invoke(tmp_path, source_dir, "--yes", "--encrypt")
+
+    assert result.exit_code == migrate_cli.EXIT_ERROR
+    assert "--passphrase-env VAR" in text(result)
+    assert not (tmp_path / "backup.usmp").exists()
+
+
+def test_encrypt_asks_twice_in_a_terminal(
+    tmp_path: Path, source_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("usmp.cli.passphrase._interactive", lambda: True)
+    typed = "\n".join(["short", "short", "first try one", "different", PASSPHRASE, PASSPHRASE])
+
+    result = runner.invoke(
+        app,
+        [
+            "migrate", "--from", f"jsondir:path={source_dir}", "--to",
+            f"jsondir:path={tmp_path / 'new'}", "--domain", "demo", "--bundle",
+            str(tmp_path / "backup.usmp"), "--report-dir", str(tmp_path / "r"), "--yes",
+            "--encrypt",
+        ],
+        input=typed + "\n",
+    )  # fmt: skip
+
+    assert result.exit_code == migrate_cli.EXIT_OK, result.output
+    assert "at least 8 characters" in text(result)
+    assert PASSPHRASE not in text(result)
+    assert (tmp_path / "backup.usmp").read_bytes().startswith(b"age-encryption.org/v1\n")
+
+
+def test_short_passphrase_from_env_is_refused(
+    tmp_path: Path, source_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("BACKUP_PASS", "short")
+    result = invoke(tmp_path, source_dir, "--yes", "--passphrase-env", "BACKUP_PASS")
+    assert result.exit_code == migrate_cli.EXIT_ERROR
+    assert "at least 8 characters" in text(result)
+
+
+def test_resume_an_encrypted_migration(
+    tmp_path: Path, source_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("BACKUP_PASS", PASSPHRASE)
+    with monkeypatch.context() as patch:
+        stop_writing(patch, 2, KeyboardInterrupt())
+        invoke(tmp_path, source_dir, "--yes", "--passphrase-env", "BACKUP_PASS")
+
+    locked = resume_cli(tmp_path, "--yes")
+    monkeypatch.setattr("usmp.cli.passphrase._interactive", lambda: True)
+    wrong = runner.invoke(
+        app,
+        ["migrate", "--resume", str(tmp_path / "backup.usmp"), "--yes"],
+        input="not the passphrase\n",
+    )
+    resumed = resume_cli(tmp_path, "--yes", "--passphrase-env", "BACKUP_PASS")
+
+    assert locked.exit_code == migrate_cli.EXIT_ERROR
+    assert "is encrypted" in text(locked)
+    assert wrong.exit_code == migrate_cli.EXIT_ERROR
+    assert "wrong passphrase" in text(wrong)
+    assert resumed.exit_code == migrate_cli.EXIT_OK, resumed.output
+    assert len(list((tmp_path / "new").rglob("*.json"))) == 4
+
+
+def test_import_an_encrypted_backup_without_a_record(
+    tmp_path: Path, source_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("BACKUP_PASS", PASSPHRASE)
+    invoke(tmp_path, source_dir, "--dry-run", "--passphrase-env", "BACKUP_PASS")
+
+    result = resume_cli(
+        tmp_path, "--yes", "--to", f"jsondir:path={tmp_path / 'other'}",
+        "--passphrase-env", "BACKUP_PASS",
+    )  # fmt: skip
+
+    assert result.exit_code == migrate_cli.EXIT_OK, result.output
+    assert len(list((tmp_path / "other").rglob("*.json"))) == 4

@@ -414,6 +414,19 @@
       "title": "Warnings",
       "type": "array"
     },
+    "backup_encrypted": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Whether the backup bundle of this run is encrypted with a passphrase (spec §7.1); absent in reports from versions that could not encrypt.",
+      "title": "Backup Encrypted"
+    },
     "ok": {
       "description": "True when nothing is mismatched or missing and no errors occurred.",
       "readOnly": true,

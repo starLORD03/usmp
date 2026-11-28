@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
 from tests.conftest import make_event
@@ -78,3 +79,66 @@ def test_unreadable_bundle_exits_2(tmp_path: Path) -> None:
 
     assert result.exit_code == 2
     assert "Cannot open bundle" in result.output
+
+
+PASSPHRASE = "correct horse battery"  # noqa: S105 - test value
+
+
+def encrypted_bundle(
+    path: Path, source_info: ConnectorInfo, capabilities: CapabilityManifest
+) -> Path:
+    with BundleWriter(
+        path, source=source_info, capabilities=capabilities, passphrase=PASSPHRASE
+    ) as w:
+        w.add_item(make_event("1"))
+    return path
+
+
+def test_encrypted_bundle_with_passphrase_env(
+    tmp_path: Path,
+    source_info: ConnectorInfo,
+    capabilities: CapabilityManifest,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = encrypted_bundle(tmp_path / "b.usmp", source_info, capabilities)
+    monkeypatch.setenv("BACKUP_PASS", PASSPHRASE)
+
+    shown = runner.invoke(app, ["bundle", "inspect", str(path), "--passphrase-env", "BACKUP_PASS"])
+    valid = runner.invoke(app, ["bundle", "validate", str(path), "--passphrase-env", "BACKUP_PASS"])
+
+    assert shown.exit_code == 0, shown.output
+    assert "Encrypted: yes" in shown.output
+    assert valid.exit_code == 0, valid.output
+    assert PASSPHRASE not in " ".join((shown.output + valid.output).split())
+
+
+def test_encrypted_bundle_asks_in_a_terminal(
+    tmp_path: Path,
+    source_info: ConnectorInfo,
+    capabilities: CapabilityManifest,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = encrypted_bundle(tmp_path / "b.usmp", source_info, capabilities)
+    monkeypatch.setattr("usmp.cli.passphrase._interactive", lambda: True)
+
+    right = runner.invoke(app, ["bundle", "validate", str(path)], input=PASSPHRASE + "\n")
+    wrong = runner.invoke(app, ["bundle", "validate", str(path)], input="nope nope nope\n")
+
+    assert right.exit_code == 0, right.output
+    assert PASSPHRASE not in " ".join(right.output.split()), "the passphrase is never echoed"
+    assert wrong.exit_code == 2
+    assert "wrong passphrase" in " ".join(wrong.output.split())
+
+
+def test_encrypted_bundle_without_a_terminal_explains(
+    tmp_path: Path, source_info: ConnectorInfo, capabilities: CapabilityManifest
+) -> None:
+    path = encrypted_bundle(tmp_path / "b.usmp", source_info, capabilities)
+
+    unset = runner.invoke(app, ["bundle", "inspect", str(path), "--passphrase-env", "NOPE_X"])
+    none = runner.invoke(app, ["bundle", "inspect", str(path)])
+
+    assert unset.exit_code == 2
+    assert "NOPE_X (from --passphrase-env) is not set" in " ".join(unset.output.split())
+    assert none.exit_code == 2
+    assert "--passphrase-env" in none.output
