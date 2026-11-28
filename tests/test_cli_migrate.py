@@ -412,9 +412,9 @@ def test_encrypted_migration_from_a_script(
     result = invoke(tmp_path, source_dir, "--yes", "--passphrase-env", "BACKUP_PASS")
 
     assert result.exit_code == migrate_cli.EXIT_OK, result.output
-    assert "Encrypted with your passphrase" in result.output
+    assert "Encrypted with your passphrase" in text(result)
     assert (tmp_path / "backup.usmp").read_bytes().startswith(b"age-encryption.org/v1\n")
-    assert PASSPHRASE not in result.output
+    assert PASSPHRASE not in text(result)
     [md] = (tmp_path / "reports").glob("*.md")
     assert "encrypted with a passphrase" in md.read_text()
 
@@ -445,8 +445,8 @@ def test_encrypt_asks_twice_in_a_terminal(
     )  # fmt: skip
 
     assert result.exit_code == migrate_cli.EXIT_OK, result.output
-    assert "at least 8 characters" in result.output
-    assert PASSPHRASE not in result.output
+    assert "at least 8 characters" in text(result)
+    assert PASSPHRASE not in text(result)
     assert (tmp_path / "backup.usmp").read_bytes().startswith(b"age-encryption.org/v1\n")
 
 

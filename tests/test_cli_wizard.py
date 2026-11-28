@@ -328,7 +328,7 @@ def test_backup_passphrase_is_asked_and_never_printed(
     )
 
     assert result.exit_code == 0, result.output
-    assert secret not in result.output
+    assert secret not in " ".join(result.output.split())
     assert "--encrypt" in result.output
     assert (tmp_path / "b.usmp").read_bytes().startswith(b"age-encryption.org/v1\n")
 

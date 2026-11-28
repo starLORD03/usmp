@@ -1,4 +1,5 @@
 import json
+import os
 import stat
 import zipfile
 from pathlib import Path
@@ -304,7 +305,8 @@ class TestEncryption:
             assert r.encrypted
             assert len(list(r.iter_items())) == 1
             assert r.validate() == []
-        assert stat.S_IMODE(locked.stat().st_mode) & 0o077 == 0, "owner only"
+        if os.name != "nt":  # POSIX file modes
+            assert stat.S_IMODE(locked.stat().st_mode) & 0o077 == 0, "owner only"
 
     def test_no_passphrase_is_refused_not_guessed(self, locked: Path) -> None:
         with pytest.raises(BundleLockedError, match="encrypted: give its passphrase"):
