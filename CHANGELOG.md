@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.2.0](https://github.com/starLORD03/usmp/compare/v0.1.0...v0.2.0) (2026-11-28)
+
+
+### Features
+
+* **calendar:** warn about events that end before they start ([#58](https://github.com/starLORD03/usmp/issues/58)) ([476cbd6](https://github.com/starLORD03/usmp/commit/476cbd675f6a75df9de8cc7bbd1c56dad8d4ec48))
+* **core:** move only a date range or chosen calendars ([#55](https://github.com/starLORD03/usmp/issues/55)) ([19e4360](https://github.com/starLORD03/usmp/commit/19e43606310ddbada79b4540cee13eb5e88862cc))
+* **core:** safe re-runs and resume after interruption ([#52](https://github.com/starLORD03/usmp/issues/52)) ([0b72fdd](https://github.com/starLORD03/usmp/commit/0b72fdd498cdbdcfc6569a46a3286751d268e411))
+* **sdk:** retries, rate limits and faster writes ([#56](https://github.com/starLORD03/usmp/issues/56)) ([8c6629d](https://github.com/starLORD03/usmp/commit/8c6629deb8558042c753ceabbbe760059158fce0))
+
+
+### Bug Fixes
+
+* **calendar:** import invitations into Google and keep their location ([#57](https://github.com/starLORD03/usmp/issues/57)) ([bc747e5](https://github.com/starLORD03/usmp/commit/bc747e5511c203b2fa4e8fd001bd31e2d3f46435))
+* **calendar:** keep backslashes and commas in .ics text exactly ([#62](https://github.com/starLORD03/usmp/issues/62)) ([d1771a9](https://github.com/starLORD03/usmp/commit/d1771a983f6d33ae52db497ad21db7aca69ee167))
+* **testing:** correct end times in the synthetic test calendar ([#54](https://github.com/starLORD03/usmp/issues/54)) ([1e24aca](https://github.com/starLORD03/usmp/commit/1e24acae7fc2c4045317b8cdfab7c7d3933e2744))
+
 ## 0.1.0 (2026-11-22)
 
 
