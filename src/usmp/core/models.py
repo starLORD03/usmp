@@ -474,6 +474,88 @@ class VerificationReport(_Model):
         return self
 
 
+class UndoOutcome(StrEnum):
+    REMOVED = "removed"
+    ALREADY_GONE = "already_gone"
+    KEPT = "kept"
+
+
+class UndoItemResult(_Model):
+    usmp_id: UsmpId
+    type: Name
+    target_native_id: str
+    outcome: UndoOutcome
+    reason: str | None = Field(
+        default=None, description="Why the item was kept, e.g. it was changed after the migration."
+    )
+
+
+class UndoSummary(_Model):
+    total: int = Field(ge=0, description="Items the migration created on the target.")
+    removed: int = Field(ge=0)
+    already_gone: int = Field(ge=0)
+    kept: int = Field(ge=0)
+    left_alone: int = Field(
+        default=0,
+        ge=0,
+        description="Items that were already on the target before the migration: never touched "
+        "and not counted in `total`.",
+    )
+
+    @classmethod
+    def from_results(cls, results: list["UndoItemResult"], *, left_alone: int = 0) -> Self:
+        def count(outcome: UndoOutcome) -> int:
+            return sum(1 for r in results if r.outcome is outcome)
+
+        return cls(
+            total=len(results),
+            removed=count(UndoOutcome.REMOVED),
+            already_gone=count(UndoOutcome.ALREADY_GONE),
+            kept=count(UndoOutcome.KEPT),
+            left_alone=left_alone,
+        )
+
+
+class UndoReport(_Model):
+    """The outcome of undoing a migration (spec §8.3): what was removed and what was kept."""
+
+    report_version: Literal[1] = 1
+    run_id: str = Field(min_length=1)
+    started_at: AwareDatetime
+    finished_at: AwareDatetime
+    domain: Name
+    target: ConnectorInfo
+    migration_source: ConnectorInfo = Field(description="Where the undone migration read from.")
+    bundle_items_sha256: Sha256 = Field(description="`items_sha256` of the migration's backup.")
+    summary: UndoSummary
+    items: list[UndoItemResult]
+    errors: list[str] = Field(
+        default_factory=list, description="Problems that stopped part of the undo."
+    )
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def ok(self) -> bool:
+        """True when no errors occurred. Kept items are not errors: they were left on purpose."""
+        return not self.errors
+
+    @model_validator(mode="before")
+    @classmethod
+    def _ignore_serialised_ok(cls, data: Any) -> Any:
+        if isinstance(data, dict) and "ok" in data:
+            data = {k: v for k, v in data.items() if k != "ok"}
+        return data
+
+    @model_validator(mode="after")
+    def _summary_matches_items(self) -> Self:
+        expected = UndoSummary.from_results(self.items, left_alone=self.summary.left_alone)
+        if self.summary != expected:
+            raise ValueError("summary does not match items")
+        if self.finished_at < self.started_at:
+            raise ValueError("finished_at is before started_at")
+        return self
+
+
 __all__ = [
     "ANY",
     "BundleManifest",
@@ -492,5 +574,9 @@ __all__ = [
     "ToolInfo",
     "TypeCapability",
     "TypeCount",
+    "UndoItemResult",
+    "UndoOutcome",
+    "UndoReport",
+    "UndoSummary",
     "VerificationReport",
 ]

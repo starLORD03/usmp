@@ -16,6 +16,7 @@ from usmp.core.models import (
     CapabilityManifest,
     Item,
     LossRecord,
+    UndoReport,
     VerificationReport,
 )
 
@@ -28,6 +29,7 @@ CORE_MODELS: dict[str, type[BaseModel]] = {
     "capability-manifest": CapabilityManifest,
     "bundle-manifest": BundleManifest,
     "verification-report": VerificationReport,
+    "undo-report": UndoReport,
 }
 
 

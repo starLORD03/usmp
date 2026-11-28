@@ -162,3 +162,19 @@ found. When a retried create is refused as a duplicate, check whether the duplic
 before reporting a conflict (spec §8.1).
 
 In tests, give your client a `RetryPolicy(sleep=lambda _seconds: None)` so retries happen at once.
+
+## 7. Undo
+
+`usmp undo` removes what a migration created. Your writer supports it by implementing
+`remove(domain, removals)`, yielding a `RemovalResult` (`REMOVED`, `ALREADY_GONE` or `KEPT` with
+a reason) for each `Removal`. USMP only asks for items this migration wrote that still match what
+was verified, children before their containers. Your job is the last check, at the provider:
+
+* remove an item only if it still carries the marker you stored for `removal.usmp_id`, and make
+  the removal conditional (`If-Match` an ETag) where the provider allows it;
+* remove a container only if you can show USMP created it (a marker, or `removal.created`, which
+  is the `created` flag your `WriteResult` set when you made it) and it holds nothing afterwards;
+* if removing one item would take others with it (a series and its changed occurrences), remove
+  it only if all of them were asked for; otherwise keep them all.
+
+Writers without `remove` still work; `usmp undo` then explains that this target cannot be undone.

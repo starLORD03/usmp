@@ -5,7 +5,7 @@ from typing import Annotated
 import typer
 
 from usmp import __version__
-from usmp.cli import auth, bundle, connectors, migrate
+from usmp.cli import auth, bundle, connectors, migrate, undo
 from usmp.sdk import registry
 
 app = typer.Typer(
@@ -18,6 +18,7 @@ app.add_typer(auth.app, name="auth")
 app.add_typer(bundle.app, name="bundle")
 app.add_typer(connectors.app, name="connectors")
 app.command("migrate")(migrate.command)
+app.command("undo")(undo.command)
 
 
 def _print_version(value: bool) -> None:

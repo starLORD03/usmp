@@ -204,6 +204,33 @@ optional list of collection names (`collections`; calendars in the calendar doma
   not included in `summary.total`. A report with `left_out` above zero MUST carry a `selection`.
 * A resumed migration (§8.1) keeps the selection it started with.
 
+### 8.3 Undoing a migration
+
+A tool MAY offer to undo a migration: remove from the target what that migration created. Undo
+MUST remove nothing else.
+
+* Undo needs the migration's progress record (§8.1). The record states, for each item on the
+  target, whether this migration wrote it (`already_present: false`) or found it already there
+  (`true`). Items found there, and items whose record does not say, MUST NOT be removed.
+* An item is removed only if it still matches what was verified after the migration (the
+  `content_hash` of the item as read back, kept in the record), or, for a migration that stopped
+  before verifying, what was migrated (compared as in §8 step 7). Anything changed since is kept.
+* Writers that support undo MUST also check, at the moment of removing, that the item still
+  carries the marker for its `usmp_id` (§8.1), and SHOULD make the removal conditional on the
+  item not having changed since that check (e.g. `If-Match`). A container (a calendar) is removed
+  only if the migration created it, it still carries the marker or the record says the writer
+  created it, and it holds nothing at all afterwards. If removing one item would remove others
+  with it (a recurring event and its overridden occurrences), all of them must qualify, or none
+  is removed.
+* Undo MUST NOT run against the migration's source, or against any target other than the one
+  recorded. It writes an **undo report**
+  ([`undo-report.schema.json`](schemas/core/undo-report.schema.json)) listing each item the
+  migration created as `removed`, `already_gone` or `kept` (with the reason).
+* When a resumed migration finds an item on the target that is missing from the record, it was
+  written by an earlier attempt of this migration only if that attempt had already searched the
+  target for items present before (`target_checked` in the record header); otherwise it counts
+  as already present.
+
 ## 9. Versioning
 
 * The core envelope, manifest and report formats carry their own version fields

@@ -37,7 +37,8 @@ from usmp.core.progress import (
     ProgressError,
     ProgressHeader,
     ProgressLog,
-    read_progress,
+    WrittenItem,
+    read_progress_items,
     safe_config,
 )
 from usmp.sdk.connector import Connector, ConnectorError, WriteResult
@@ -262,7 +263,7 @@ def _write_and_verify(
     target: Connector,
     target_caps: CapabilityManifest,
     log: ProgressLog,
-    known: Mapping[str, WriteResult],
+    known: Mapping[str, WrittenItem],
     progress: Callable[[str], None],
     started: datetime,
     advance: Callable[[int, int], None],
@@ -280,11 +281,16 @@ def _write_and_verify(
         with target.open_writer() as writer:
             progress(f"Checking what is already in {target.display_name}…")
             try:
-                for found in writer.already_written(to_write, known):
+                recorded = {usmp_id: item.result() for usmp_id, item in known.items()}
+                # Once an earlier attempt has searched the target, anything found that is not in
+                # the record was stored by that attempt just before it stopped.
+                ours = log.header.target_checked
+                for found in writer.already_written(to_write, recorded):
                     results[found.usmp_id] = found
                     present.add(found.usmp_id)
                     if found.usmp_id not in known:
-                        log.record(found)
+                        log.record(found, already_present=not ours)
+                log.mark_target_checked()
             except ConnectorError as exc:
                 # Without knowing what is there, writing could only fail or duplicate.
                 errors.append(f"cannot check what is already in the target: {exc}")
@@ -297,7 +303,7 @@ def _write_and_verify(
                 try:
                     for result in writer.write(remaining):
                         results[result.usmp_id] = result
-                        log.record(result)
+                        log.record(result, already_present=False)
                         written += 1
                         advance(written, len(remaining))
                 except ConnectorError as exc:
@@ -307,6 +313,10 @@ def _write_and_verify(
                 native_ids = [r.native_id for r in results.values()]
                 for read in writer.read_back(domain, native_ids):
                     back_by_native[read.source.native_id] = read
+                for result in results.values():
+                    back = back_by_native.get(result.native_id)
+                    if back is not None:
+                        log.verified(result.usmp_id, back.content_hash)
             except ConnectorError as exc:
                 errors.append(f"reading back failed: {exc}")
     except ConnectorError as exc:
@@ -414,6 +424,8 @@ def migrate(
         target_connector=target.name,
         target_config=target.config,
         selection=selection,
+        source_connector=source.name,
+        source_config=source.config,
     )
     with log:
         report = _write_and_verify(
@@ -441,7 +453,7 @@ def resume(
     """
     started = datetime.now(UTC)
     try:
-        record = read_progress(bundle_path)
+        record = read_progress_items(bundle_path)
         with BundleReader(bundle_path) as bundle:
             problems = bundle.validate()
             if problems:

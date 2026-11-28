@@ -4,12 +4,14 @@ A connector is used in one of two roles:
 
 * **Reader**: exports items from a source. A Reader has no methods that change the provider, and
   the engine only ever opens a source as a Reader. This is what makes migrations non-destructive.
-* **Writer**: imports items into a target and reads them back for verification.
+* **Writer**: imports items into a target and reads them back for verification. Writers may also
+  remove what a migration created, to undo it (:meth:`Writer.remove`).
 """
 
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
+from enum import StrEnum
 from types import TracebackType
 from typing import ClassVar, Self
 
@@ -45,6 +47,35 @@ class WriteResult:
     native_id: str
     """The target's identifier for the written item; used to read it back."""
     losses: Sequence[LossRecord] = field(default_factory=tuple)
+    created: bool = False
+    """The writer made a new container for this item (e.g. a new calendar) rather than reusing
+    one that was already there. Undo only removes containers that a migration created."""
+
+
+@dataclass(frozen=True)
+class Removal:
+    """One item a migration created, to be removed when it is undone."""
+
+    usmp_id: str
+    native_id: str
+    """Where the migration wrote the item, as its :class:`WriteResult` said."""
+    type: str
+    created: bool = False
+    """``WriteResult.created`` as recorded when the item was written."""
+
+
+class RemovalOutcome(StrEnum):
+    REMOVED = "removed"
+    ALREADY_GONE = "already_gone"
+    KEPT = "kept"
+
+
+@dataclass(frozen=True)
+class RemovalResult:
+    usmp_id: str
+    outcome: RemovalOutcome
+    reason: str | None = None
+    """Why the item was kept; shown to the user."""
 
 
 class _Closeable:
@@ -97,6 +128,30 @@ class Writer(_Closeable, ABC):
         Results may come in any order. Yielding only after an item is stored lets an
         interrupted migration resume without writing it twice.
         """
+
+    @property
+    def can_remove(self) -> bool:
+        """Whether this writer implements :meth:`remove`, so migrations into it can be undone."""
+        return type(self).remove is not Writer.remove
+
+    def remove(self, domain: str, removals: Sequence[Removal]) -> Iterator[RemovalResult]:
+        """Remove items a migration created and yield one result per removal.
+
+        The engine only asks for items that this migration wrote and that still match what was
+        verified. Implementations MUST additionally:
+
+        * remove an item only if it still carries the USMP marker for ``removal.usmp_id``, and
+          otherwise keep it (``KEPT``) with a reason;
+        * never remove a container (e.g. a calendar) that still holds anything, nor one they
+          cannot show was created by USMP;
+        * never remove something that was not asked for: if removing one item would take others
+          with it (e.g. a recurring event with a changed occurrence), keep them all;
+        * report items that no longer exist as ``ALREADY_GONE``.
+
+        ``removals`` holds children before their containers.
+        """
+        raise ConnectorError("this target cannot remove items, so the migration cannot be undone")
+        yield  # pragma: no cover - makes this a generator
 
     @abstractmethod
     def read_back(self, domain: str, native_ids: Sequence[str]) -> Iterator[Item]:

@@ -126,6 +126,17 @@ Implementations MUST reject items of this domain whose payload is invalid or not
   its address in the private extended property `usmp_added_guest`. Readers leave that guest out,
   so the attendee list round-trips unchanged.
 
+* **Undo (core §8.3).** An event is removed only together with every VEVENT sharing its UID in
+  the same file or resource (the series and its overridden occurrences), and only if all of them
+  carry the `X-USMP-ID` of an item being removed; otherwise all are kept. On Google Calendar a
+  series is removed by deleting its master event, under the same condition for its changed
+  occurrences, and a changed occurrence of a series that stays is kept (removing it alone would
+  cancel that occurrence). A calendar is removed only if it holds no events, to-dos or journal
+  entries afterwards, and: for `.ics` files and CalDAV, it carries the calendar's `X-USMP-ID`
+  (or the WebDAV property `usmp-id`); for Google Calendar, which has no such property, the
+  progress record says the writer created it. A calendar merged into (`calendar=`) is never
+  removed.
+
 ## 8. Selecting events
 
 How a selection (core spec §8.2) applies to calendar items:

@@ -24,6 +24,8 @@ Source ──read only──► canonical data ──► .usmp bundle (backup + 
 - **Your source is never modified.** Connectors can only read from the source.
 - **Nothing is lost silently.** Fields the target can't hold are listed *before* you migrate.
   Afterwards, USMP reads everything back and verifies it.
+- **Safe to repeat, and to take back.** Re-runs never write anything twice, an interrupted run can
+  be resumed, and `usmp undo` removes what a migration created, leaving everything else alone.
 - **Local-first.** Runs on your machine. Your data and credentials stay with you.
 
 Read the [architecture overview](docs/architecture/overview.md) for details.

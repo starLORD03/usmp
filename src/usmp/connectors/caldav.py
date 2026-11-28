@@ -29,14 +29,18 @@ from caldav.lib.url import URL
 
 from usmp.connectors._ical import (
     HEX_COLOR,
+    NOT_EMPTY,
+    NOT_MARKED,
     build_vcalendar,
     calendar_capabilities,
     event_records,
     marked_events,
     parse_vcalendar,
     recurrence_key,
+    removable_events,
     unstorable_fields,
     vevent,
+    without_events,
 )
 from usmp.core.models import CapabilityManifest, Item, LossReason, LossRecord, Severity
 from usmp.domains.calendar import calendar_item
@@ -46,6 +50,9 @@ from usmp.sdk.connector import (
     ConnectorError,
     ExportRecord,
     Reader,
+    Removal,
+    RemovalOutcome,
+    RemovalResult,
     Writer,
     WriteResult,
 )
@@ -209,6 +216,7 @@ class _CalDavWriter(Writer):
         self._only = only
         self._workers = workers
         self._fresh: set[str] = set()  # calendars created by this writer
+        self._created: set[str] = set()  # their URLs, reported as WriteResult.created
         self._placed: dict[str, Any] = {}  # calendar usmp_id -> calendar an earlier run made
 
     def _target_calendars(self) -> dict[str, Any]:
@@ -226,6 +234,7 @@ class _CalDavWriter(Writer):
             cal = self._client.principal().make_calendar(name=unique)
         existing[unique] = cal
         self._fresh.add(str(cal.url))
+        self._created.add(str(cal.url))
         if usmp_id:
             # Lets a re-run recognise the calendar even while it is empty. Optional: servers
             # that refuse custom properties are still recognised by the events inside.
@@ -350,7 +359,8 @@ class _CalDavWriter(Writer):
             else:
                 losses += self._apply_properties(cal, item)
             by_source[item.usmp_id] = cal
-            yield WriteResult(item.usmp_id, str(cal.url), tuple(losses))
+            created = merged is None and str(cal.url) in self._created
+            yield WriteResult(item.usmp_id, str(cal.url), tuple(losses), created)
 
         # One CalDAV resource per UID: the master event plus its overridden occurrences.
         groups: dict[tuple[str, str], list[Item]] = defaultdict(list)
@@ -453,6 +463,69 @@ class _CalDavWriter(Writer):
             stage="import",
             detail=detail,
         )
+
+    def remove(self, domain: str, removals: Sequence[Removal]) -> Iterator[RemovalResult]:
+        if domain != "calendar":
+            return
+        resources: dict[str, list[Removal]] = defaultdict(list)
+        for removal in removals:
+            if removal.type == "event":
+                resources[removal.native_id.split("#", 1)[0]].append(removal)
+        for url, group in resources.items():
+            with _errors(f"removing event {url}"):
+                yield from self._remove_resource(url, group)
+        for removal in removals:
+            if removal.type == "calendar":
+                with _errors(f"removing calendar {removal.native_id}"):
+                    yield self._remove_calendar(removal)
+
+    def _remove_resource(self, url: str, group: Sequence[Removal]) -> Iterator[RemovalResult]:
+        """Delete (or rewrite) one resource, only while it is unchanged since it was checked."""
+        response = self._client.request(url, "GET")
+        if response.status == 404:
+            for removal in group:
+                yield RemovalResult(removal.usmp_id, RemovalOutcome.ALREADY_GONE)
+            return
+        if response.status >= 400:
+            raise ConnectorError(f"the server refused to read {url} (HTTP {response.status})")
+        vcal = parse_vcalendar(response.raw, url)
+        drop, outcomes = removable_events(vcal, group, _event_native_id(url))
+        if drop:
+            etag = (response.headers or {}).get("ETag")
+            condition = {"If-Match": etag} if etag else {}
+            rest = without_events(vcal, drop)
+            if rest.walk("VEVENT"):
+                headers = {"Content-Type": 'text/calendar; charset="utf-8"', **condition}
+                answer = self._client.put(url, rest.to_ical().decode(), headers)
+            else:
+                answer = self._client.request(url, "DELETE", "", condition)
+            if answer.status == 412 and self._client.request(url, "GET").status != 404:
+                changed = "it changed on the server while undoing"
+                outcomes = {
+                    k: RemovalResult(k, RemovalOutcome.KEPT, changed)
+                    if v.outcome is RemovalOutcome.REMOVED
+                    else v
+                    for k, v in outcomes.items()
+                }
+            elif answer.status >= 400 and answer.status not in (404, 412):
+                raise ConnectorError(f"the server refused to remove {url} (HTTP {answer.status})")
+        yield from outcomes.values()
+
+    def _remove_calendar(self, removal: Removal) -> RemovalResult:
+        cal = self._client.calendar(url=removal.native_id)
+        try:
+            props = cal.get_properties([_UsmpId()])
+        except caldav_error.NotFoundError:
+            return RemovalResult(removal.usmp_id, RemovalOutcome.ALREADY_GONE)
+        marker = str(props.get(_UsmpId.tag) or "")
+        # Servers that refuse the marker property: rely on the record that this run created it.
+        if marker != removal.usmp_id and (marker or not removal.created):
+            return RemovalResult(removal.usmp_id, RemovalOutcome.KEPT, NOT_MARKED)
+        # Calendar queries, not a sync report: sync reports also list deleted resources.
+        if cal.events() or cal.todos() or cal.journals():
+            return RemovalResult(removal.usmp_id, RemovalOutcome.KEPT, NOT_EMPTY)
+        cal.delete()
+        return RemovalResult(removal.usmp_id, RemovalOutcome.REMOVED)
 
     def read_back(self, domain: str, native_ids: Sequence[str]) -> Iterator[Item]:
         wanted = set(native_ids)
