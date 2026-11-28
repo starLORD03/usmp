@@ -120,6 +120,11 @@ Implementations MUST reject items of this domain whose payload is invalid or not
   they create, where the server allows it. Google Calendar writers use the private extended
   property `usmp_id`. Readers MUST NOT put these markers into the payload or `provider_data`:
   they identify an item, they are not part of it.
+* **Google's organizer rule.** Google Calendar only imports an event whose organizer or guests
+  include the target calendar. When neither does (an invitation from another account, or from
+  the same person's old address), the writer adds the calendar as an accepted guest and records
+  its address in the private extended property `usmp_added_guest`. Readers leave that guest out,
+  so the attendee list round-trips unchanged.
 
 ## 8. Selecting events
 

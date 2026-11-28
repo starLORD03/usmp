@@ -320,6 +320,34 @@ class TestWriting:
         assert result.report.summary.mismatch == 0
         assert any(path.endswith("_20260518T130000Z") for m, path in google.log if m == "PUT")
 
+    def test_invitation_from_someone_else_adds_the_calendar_as_guest(
+        self, google: FakeGoogle, tmp_path: Path
+    ) -> None:
+        from usmp.connectors.memory import MemoryConnector
+
+        payload = {
+            "uid": "inv@x",
+            "start": "2026-01-01T09:00:00",
+            "end": "2026-01-01T10:00:00",
+            "time_zone": "UTC",
+            "organizer": {"email": "old-me@example.com"},
+        }
+        ev = event_item("s", "1", payload)
+        result = migrate(
+            MemoryConnector({"domain": "calendar"}, items=[ev]),
+            connector(),
+            bundle_path=tmp_path / "b.usmp",
+        )
+
+        assert result.report is not None and result.report.ok, result.report
+        assert result.report.summary.verified == 1, "no loss, no mismatch"
+        [(cal_id, events)] = [(c, e) for c, e in google.events.items() if e]
+        [stored] = events.values()
+        assert stored["attendees"] == [{"email": cal_id, "responseStatus": "accepted"}]
+        [record] = list(connector().open_reader().read("calendar"))[1:]
+        assert "attendees" not in record.item.payload
+        assert "provider_data" not in record.item.payload
+
     def test_unsupported_values_are_declared(self, google: FakeGoogle, tmp_path: Path) -> None:
         from usmp.connectors.memory import MemoryConnector
 
@@ -640,3 +668,26 @@ def test_usmp_marker_is_never_part_of_provider_data(
     google: dict[str, Any] = {"extendedProperties": props}
     gcal._drop_marker(google)
     assert google.get("extendedProperties") == kept
+
+
+@pytest.mark.parametrize(
+    ("location", "written", "expected"),
+    [
+        ("Online, Meeting room", "Online", "Online"),
+        ("Meeting room", "", ""),
+        ("Café Central, Vienna, Meeting room", "Café Central, Vienna", "Café Central, Vienna"),
+        ("Somewhere new", "Online", None),  # edited in Google since: keep what Google has
+        ("Online", "Online", "Online"),
+    ],
+)
+def test_location_written_before_google_added_rooms(
+    location: str, written: str, expected: str | None
+) -> None:
+    ev = {
+        "location": location,
+        "attendees": [{"email": "r@rooms.example.com", "resource": True,
+                       "displayName": "Meeting room"}],
+        "extendedProperties": {"private": {"usmp_location": written}},
+    }  # fmt: skip
+    assert gcal._written_location(ev) == expected
+    assert gcal._written_location({"location": location}) is None
