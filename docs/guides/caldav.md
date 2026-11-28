@@ -58,7 +58,10 @@ this against real accounts (use test calendars, never your only copy):
       migrates with 0 mismatch and 0 missing.
 - [ ] Recurring events with a moved occurrence and an exception show correctly in Apple Calendar.
 - [ ] All-day events stay on the right day in a zone different from yours.
-- [ ] Re-running into the same calendar reports "already exists" instead of duplicating.
+- [ ] Running the same migration again writes nothing: the report says every item was already
+      in the target, and no `Work (2)` calendar appears.
+- [ ] Stopping a migration halfway (Ctrl+C) and running `usmp migrate --resume <backup>` finishes
+      it with no duplicates.
 - [ ] A wrong password gives "sign-in failed … app-specific password".
 - [ ] **Nextcloud:** the same four migrations, plus colours and descriptions show in the web UI.
 - [ ] The source account is unchanged afterwards: compare event counts before and after.

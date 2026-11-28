@@ -10,13 +10,13 @@ target unless ``confirm`` returns true, and a dry run stops after the preview.
 
 import uuid
 from collections import Counter, defaultdict
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
 from usmp import domains
-from usmp.core.bundle import BundleWriter
+from usmp.core.bundle import BundleError, BundleReader, BundleWriter
 from usmp.core.hashing import canonical_json
 from usmp.core.models import (
     BundleManifest,
@@ -31,7 +31,14 @@ from usmp.core.models import (
     Severity,
     VerificationReport,
 )
-from usmp.sdk.connector import Connector, ConnectorError
+from usmp.core.progress import (
+    ProgressError,
+    ProgressHeader,
+    ProgressLog,
+    read_progress,
+    safe_config,
+)
+from usmp.sdk.connector import Connector, ConnectorError, WriteResult
 
 ALL_FIELDS = "*"
 """``LossRecord.field`` value meaning the whole item cannot be migrated."""
@@ -193,15 +200,20 @@ def _verify(
     lost_fields: set[str],
     native_id: str | None,
     changed_by_target: frozenset[str] = frozenset(),
+    *,
+    already_present: bool = False,
 ) -> ItemResult:
     def result(status: ItemStatus, **fields: list[str]) -> ItemResult:
-        return ItemResult(
-            usmp_id=item.usmp_id,
-            type=item.type,
-            status=status,
-            target_native_id=native_id,
-            declared_loss_fields=sorted(lost_fields),
-            **fields,
+        return ItemResult.model_validate(
+            {
+                "usmp_id": item.usmp_id,
+                "type": item.type,
+                "status": status,
+                "target_native_id": native_id,
+                "declared_loss_fields": sorted(lost_fields),
+                "already_present": already_present,
+                **fields,
+            }
         )
 
     cap = target.type_capability(item.domain, item.type)
@@ -218,6 +230,101 @@ def _verify(
         if name not in back.payload or _differs(item.payload[name], back.payload[name])
     ]
     return result(ItemStatus.MISMATCH, compared_fields=compared, mismatched_fields=mismatched)
+
+
+def _write_and_verify(
+    preview: Preview,
+    items: list[Item],
+    target: Connector,
+    target_caps: CapabilityManifest,
+    log: ProgressLog,
+    known: Mapping[str, WriteResult],
+    progress: Callable[[str], None],
+    started: datetime,
+) -> VerificationReport:
+    """Import whatever is not on the target yet, read everything back and verify it."""
+    domain = preview.domain
+    blocked = {loss.usmp_id for loss in preview.losses if loss.field == ALL_FIELDS}
+    to_write = [i for i in items if i.usmp_id not in blocked]
+    results: dict[str, WriteResult] = {}
+    present: set[str] = set()
+    errors: list[str] = []
+
+    back_by_native: dict[str, Item] = {}
+    try:
+        with target.open_writer() as writer:
+            progress(f"Checking what is already in {target.display_name}…")
+            try:
+                for found in writer.already_written(to_write, known):
+                    results[found.usmp_id] = found
+                    present.add(found.usmp_id)
+                    if found.usmp_id not in known:
+                        log.record(found)
+            except ConnectorError as exc:
+                # Without knowing what is there, writing could only fail or duplicate.
+                errors.append(f"cannot check what is already in the target: {exc}")
+            else:
+                remaining = [i for i in to_write if i.usmp_id not in present]
+                skipped = f" ({len(present)} already there)" if present else ""
+                progress(f"Writing {len(remaining)} items to {target.display_name}{skipped}…")
+                written = 0
+                try:
+                    for result in writer.write(remaining):
+                        results[result.usmp_id] = result
+                        log.record(result)
+                        written += 1
+                except ConnectorError as exc:
+                    errors.append(f"writing stopped after {written} items: {exc}")
+            progress("Reading items back to verify…")
+            try:
+                native_ids = [r.native_id for r in results.values()]
+                for read in writer.read_back(domain, native_ids):
+                    back_by_native[read.source.native_id] = read
+            except ConnectorError as exc:
+                errors.append(f"reading back failed: {exc}")
+    except ConnectorError as exc:
+        errors.append(f"cannot open {target.display_name} for writing: {exc}")
+
+    import_losses = [loss for r in results.values() for loss in r.losses]
+    all_losses = [*preview.losses, *import_losses]
+    lost_by_item: dict[str, set[str]] = defaultdict(set)
+    for loss in all_losses:
+        lost_by_item[loss.usmp_id].add(loss.field)
+
+    # Fields the target itself reported as changed on import are declared losses, not mismatches.
+    changed_by_target: dict[str, set[str]] = defaultdict(set)
+    for loss in import_losses:
+        changed_by_target[loss.usmp_id].add(loss.field)
+
+    verified = []
+    for item in items:
+        stored = results.get(item.usmp_id)
+        native_id = stored.native_id if stored else None
+        back = back_by_native.get(native_id) if native_id else None
+        outcome = _verify(
+            item,
+            back,
+            target_caps,
+            lost_by_item.get(item.usmp_id, set()),
+            native_id,
+            frozenset(changed_by_target.get(item.usmp_id, set())),
+            already_present=item.usmp_id in present,
+        )
+        verified.append(outcome)
+
+    return VerificationReport(
+        run_id=uuid.uuid4().hex,
+        started_at=started,
+        finished_at=datetime.now(UTC),
+        domain=domain,
+        dry_run=False,
+        source=preview.source,
+        target=preview.target,
+        summary=ReportSummary.from_results(verified),
+        items=verified,
+        losses=all_losses,
+        errors=errors,
+    )
 
 
 def migrate(
@@ -260,67 +367,95 @@ def migrate(
     if not confirm(preview):
         return MigrationResult(preview=preview, cancelled=True)
 
-    blocked = {loss.usmp_id for loss in preview.losses if loss.field == ALL_FIELDS}
-    to_write = [i for i in exported.items if i.usmp_id not in blocked]
-    native_ids: dict[str, str] = {}
-    import_losses: list[LossRecord] = []
-    errors: list[str] = []
-
-    progress(f"Writing {len(to_write)} items to {target.display_name}…")
-    back_by_native: dict[str, Item] = {}
-    try:
-        with target.open_writer() as writer:
-            try:
-                for written in writer.write(to_write):
-                    native_ids[written.usmp_id] = written.native_id
-                    import_losses.extend(written.losses)
-            except ConnectorError as exc:
-                errors.append(f"writing stopped after {len(native_ids)} items: {exc}")
-            progress("Reading items back to verify…")
-            try:
-                for read in writer.read_back(domain, list(native_ids.values())):
-                    back_by_native[read.source.native_id] = read
-            except ConnectorError as exc:
-                errors.append(f"reading back failed: {exc}")
-    except ConnectorError as exc:
-        errors.append(f"cannot open {target.display_name} for writing: {exc}")
-
-    all_losses = [*preview.losses, *import_losses]
-    lost_by_item: dict[str, set[str]] = defaultdict(set)
-    for loss in all_losses:
-        lost_by_item[loss.usmp_id].add(loss.field)
-
-    # Fields the target itself reported as changed on import are declared losses, not mismatches.
-    changed_by_target: dict[str, set[str]] = defaultdict(set)
-    for loss in import_losses:
-        changed_by_target[loss.usmp_id].add(loss.field)
-
-    results = []
-    for item in exported.items:
-        native_id = native_ids.get(item.usmp_id)
-        back = back_by_native.get(native_id) if native_id else None
-        results.append(
-            _verify(
-                item,
-                back,
-                target_caps,
-                lost_by_item.get(item.usmp_id, set()),
-                native_id,
-                frozenset(changed_by_target.get(item.usmp_id, set())),
-            )
-        )
-
-    report = VerificationReport(
-        run_id=uuid.uuid4().hex,
-        started_at=started,
-        finished_at=datetime.now(UTC),
+    log = ProgressLog.start(
+        bundle_path,
+        items_sha256=preview.bundle.items_sha256,
         domain=domain,
-        dry_run=False,
-        source=preview.source,
         target=preview.target,
-        summary=ReportSummary.from_results(results),
-        items=results,
-        losses=all_losses,
-        errors=errors,
+        target_connector=target.name,
+        target_config=target.config,
     )
+    with log:
+        report = _write_and_verify(
+            preview, exported.items, target, target_caps, log, {}, progress, started
+        )
+    return MigrationResult(preview=preview, report=report)
+
+
+def resume(
+    target: Connector,
+    *,
+    bundle_path: Path,
+    dry_run: bool = False,
+    confirm: Callable[[Preview], bool] = lambda _preview: True,
+    progress: Callable[[str], None] = lambda _message: None,
+) -> MigrationResult:
+    """Finish a migration from its backup bundle, without reading the source again.
+
+    Items the progress record (or the target itself) shows as already written are not written
+    again; everything is still read back and verified. Without a progress record this imports the
+    bundle into ``target``.
+    """
+    started = datetime.now(UTC)
+    try:
+        record = read_progress(bundle_path)
+        with BundleReader(bundle_path) as bundle:
+            problems = bundle.validate()
+            if problems:
+                raise MigrationError(f"the backup {bundle_path} is damaged: {problems[0]}")
+            manifest = bundle.manifest
+            items = list(bundle.iter_items())
+            export_losses = bundle.losses()
+    except (BundleError, ProgressError) as exc:
+        raise MigrationError(str(exc)) from exc
+    domains_in_bundle = sorted({c.domain for c in manifest.counts})
+    if record is not None:
+        header, known = record
+        if header.items_sha256 != manifest.items_sha256:
+            raise MigrationError(
+                f"the progress record next to {bundle_path} belongs to a different backup"
+            )
+        if header.target_connector != target.name:
+            raise MigrationError(
+                f"this migration was going to {header.target.display_name}, "
+                f"not {target.display_name}"
+            )
+        domain = header.domain
+    else:
+        known = {}
+        domain = choose_domain(
+            manifest.capabilities, domains_in_bundle[0] if len(domains_in_bundle) == 1 else None
+        )
+    target_caps = target.capabilities()
+    check_plan(manifest.capabilities, target_caps, domain)
+    items = [i for i in items if i.domain == domain]
+    preview = Preview(
+        domain=domain,
+        source=manifest.source,
+        target=target.info(),
+        counts=dict(Counter(i.type for i in items)),
+        losses=[*export_losses, *predict_losses(items, target_caps, domain)],
+        bundle=manifest,
+        bundle_path=bundle_path,
+    )
+    if dry_run:
+        return MigrationResult(preview=preview)
+    if not confirm(preview):
+        return MigrationResult(preview=preview, cancelled=True)
+    header = (
+        record[0].model_copy(update={"target": preview.target})
+        if record is not None
+        else ProgressHeader(
+            started_at=started,
+            items_sha256=manifest.items_sha256,
+            domain=domain,
+            target=preview.target,
+            target_connector=target.name,
+            target_config=safe_config(target.config),
+        )
+    )
+    with ProgressLog(bundle_path, header, known) as log:
+        report = _write_and_verify(
+            preview, items, target, target_caps, log, known, progress, started
+        )
     return MigrationResult(preview=preview, report=report)

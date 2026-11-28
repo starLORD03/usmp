@@ -116,9 +116,10 @@ def check_round_trip(connector: Connector, items: Sequence[Item], domain: str) -
     manifest = connector.capabilities()
     with connector.open_writer() as writer:
         results = list(writer.write(items))
-        if [r.usmp_id for r in results] != [i.usmp_id for i in items]:
-            raise _fail(connector, "write() must yield one result per item, in order")
-        native = [r.native_id for r in results]
+        by_id = {r.usmp_id: r for r in results}
+        if len(results) != len(items) or set(by_id) != {i.usmp_id for i in items}:
+            raise _fail(connector, "write() must yield exactly one result per item")
+        native = [by_id[i.usmp_id].native_id for i in items]
         if len(set(native)) != len(native):
             raise _fail(connector, "write() returned duplicate native ids")
         back = {b.source.native_id: b for b in writer.read_back(domain, native)}
@@ -148,12 +149,29 @@ def check_round_trip(connector: Connector, items: Sequence[Item], domain: str) -
     return list(back.values())
 
 
+def check_rerun(connector: Connector, items: Sequence[Item]) -> None:
+    """After a write, a new writer finds every item through ``already_written`` (spec §8.1)."""
+    with connector.open_writer() as writer:
+        first = {r.usmp_id: r.native_id for r in writer.write(items)}
+    with connector.open_writer() as writer:
+        found = {r.usmp_id: r.native_id for r in writer.already_written(items, {})}
+        missing = [i.usmp_id for i in items if i.usmp_id not in found]
+        if missing:
+            raise _fail(connector, f"already_written() did not find {missing[0]} after writing it")
+        if found != first:
+            raise _fail(connector, "already_written() returned different native ids than write()")
+        if list(writer.write([])):
+            raise _fail(connector, "write([]) must write nothing")
+
+
 class ConnectorConformance:
     """Mix-in for pytest. Subclass it as ``Test<Name>`` and fill in the hooks."""
 
     domain: ClassVar[str]
     can_read: ClassVar[bool] = True
     can_write: ClassVar[bool] = True
+    finds_written: ClassVar[bool] = False
+    """Set when the writer recognises items it wrote before (``Writer.already_written``)."""
 
     def make_connector(self) -> Connector:
         """Return a fresh connector, pointed at a test account or a temporary location."""
@@ -184,3 +202,7 @@ class ConnectorConformance:
     def test_write_read_back_round_trip(self) -> None:
         if self.can_write:
             check_round_trip(self.make_connector(), self.sample_items(), self.domain)
+
+    def test_rerun_finds_written_items(self) -> None:
+        if self.can_write and self.finds_written:
+            check_rerun(self.make_connector(), self.sample_items())

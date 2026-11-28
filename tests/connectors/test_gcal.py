@@ -10,6 +10,7 @@ from typer.testing import CliRunner
 from tests.connectors.fake_google import FakeGoogle
 from usmp.cli.app import app
 from usmp.connectors import gcal
+from usmp.connectors._ical import build_vcalendar
 from usmp.connectors.gcal import GoogleCalendarConnector, _Api, _minutes_before
 from usmp.connectors.ics import IcsConnector
 from usmp.core.engine import migrate
@@ -272,6 +273,7 @@ def sample() -> list[Item]:
 
 
 class TestGoogleConformance(ConnectorConformance):
+    finds_written = True
     domain = "calendar"
 
     @pytest.fixture(autouse=True)
@@ -337,8 +339,30 @@ class TestWriting:
         again = migrate(ics, connector(calendar="Imported stuff"), bundle_path=tmp_path / "b.usmp")
 
         assert first.report is not None and first.report.ok, first.report
-        assert again.report is not None and not again.report.ok
-        assert any("already exists" in e for e in again.report.errors)
+        assert again.report is not None and again.report.ok, again.report
+        events = [r for r in again.report.items if r.type == "event"]
+        assert events and all(r.already_present for r in events)
+        assert sum(c["summary"] == "Imported stuff" for c in google.calendars.values()) == 1
+
+    def test_unmarked_event_with_same_uid_is_never_overwritten(
+        self, google: FakeGoogle, tmp_path: Path
+    ) -> None:
+        google.add_calendar("mine", "Mine")
+        google.add_event("mine", {"id": "x", "iCalUID": "o@x", "start": {"date": "2026-01-01"}})
+        ics = tmp_path / "one.ics"
+        ics.write_bytes(
+            build_vcalendar([{"uid": "o@x", "start": "2026-01-01", "title": "Mine too"}])
+        )
+
+        result = migrate(
+            IcsConnector({"path": str(ics)}),
+            connector(calendar="Mine"),
+            bundle_path=tmp_path / "a.usmp",
+        )
+
+        assert result.report is not None and not result.report.ok
+        assert any("already exists" in e for e in result.report.errors)
+        assert "summary" not in google.events["mine"]["x"]
 
     def test_orphan_events_and_bad_items(self, google: FakeGoogle) -> None:
         orphan = event_item("s", "1", {"uid": "o@x", "start": "2026-01-01"})
@@ -580,3 +604,20 @@ class TestSignIn:
 
 def test_info_label_defaults_to_account() -> None:
     assert connector().info().label == "me@example.com"
+
+
+@pytest.mark.parametrize(
+    ("props", "kept"),
+    [
+        ({"private": {"usmp_id": "usmp:x"}}, None),
+        ({"private": {"usmp_id": "usmp:x", "mine": "1"}}, {"private": {"mine": "1"}}),
+        ({"private": {"usmp_id": "usmp:x"}, "shared": {"a": "b"}}, {"shared": {"a": "b"}}),
+        ({"shared": {"a": "b"}}, {"shared": {"a": "b"}}),
+    ],
+)
+def test_usmp_marker_is_never_part_of_provider_data(
+    props: dict[str, Any], kept: dict[str, Any] | None
+) -> None:
+    google: dict[str, Any] = {"extendedProperties": props}
+    gcal._drop_marker(google)
+    assert google.get("extendedProperties") == kept

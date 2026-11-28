@@ -1,18 +1,28 @@
 """``usmp migrate``: move one domain from a source to a target and verify it."""
 
+import shlex
 import sys
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, NoReturn
 
 import typer
 from rich.console import Console
 from rich.table import Table
 
 from usmp.cli import wizard
-from usmp.core.engine import MigrationError, Preview, migrate
+from usmp.core.bundle import BundleError, BundleReader
+from usmp.core.engine import MigrationError, MigrationResult, Preview, migrate, resume
 from usmp.core.models import ItemStatus, VerificationReport
-from usmp.core.report import REASON_LABELS, STATUS_LABELS, summarize_losses, write_reports
+from usmp.core.progress import ProgressError, progress_path, read_progress
+from usmp.core.report import (
+    ALREADY_PRESENT,
+    REASON_LABELS,
+    STATUS_LABELS,
+    summarize_losses,
+    write_reports,
+)
 from usmp.sdk import registry
 from usmp.sdk.connector import Connector, ConnectorError
 
@@ -84,6 +94,8 @@ def _show_report(report: VerificationReport, paths: list[Path]) -> None:
     ):
         table.add_row(STATUS_LABELS[status], str(count))
     console.print(table)
+    if s.already_present:
+        console.print(f"  [dim]{s.already_present} {ALREADY_PRESENT}[/dim]")
     for error in report.errors:
         console.print(f"  [red]• {error}[/red]")
     html = next((p for p in paths if p.suffix == ".html"), paths[0])
@@ -121,12 +133,26 @@ def command(
         typer.Option("--dry-run", help="Export and preview only; write nothing to the target."),
     ] = False,
     yes: Annotated[bool, typer.Option("--yes", "-y", help="Do not ask for confirmation.")] = False,
+    resume_from: Annotated[
+        Path | None,
+        typer.Option(
+            "--resume",
+            help="Finish an interrupted migration from its backup (.usmp). The source is not "
+            "read again; nothing already written is written twice.",
+            exists=True,
+            dir_okay=False,
+        ),
+    ] = None,
 ) -> None:
     """Migrate data from a source to a target, then verify that it arrived intact.
 
     Run it without --from and --to to be guided step by step. The source is only ever read. A
-    backup bundle of everything exported is saved first.
+    backup bundle of everything exported is saved first. Running the same migration again, or
+    with --resume after it was interrupted, never writes anything twice.
     """
+    if resume_from is not None:
+        _resume(resume_from, target, domain, report_dir, dry_run=dry_run, yes=yes, source=source)
+        return
     repeat: str | None = None
     if source is None and target is None:
         if not _interactive():
@@ -151,31 +177,21 @@ def command(
         missing = "--from" if source is None else "--to"
         console.print(f"[red]✗ Missing {missing}. Give both --from and --to, or neither.[/red]")
         raise typer.Exit(EXIT_ERROR)
+    stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
+    bundle_path = bundle or Path(f"usmp-{domain or 'export'}-{stamp}.usmp")
     try:
         if repeat is not None:
             src, dst = (registry.get(e.name)(e.config) for e in endpoints)
         else:
             src, dst = _connector(source, domain), _connector(target, domain)
-        stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
-        bundle_path = bundle or Path(f"usmp-{domain or 'export'}-{stamp}.usmp")
-
-        def confirm(preview: Preview) -> bool:
-            _show_preview(preview)
-            if dry_run or yes:
-                return True
-            if not _interactive():
-                console.print("[red]Not running interactively: pass --yes to confirm.[/red]")
-                return False
-            return typer.confirm(f"\nWrite {preview.total} items to the target?", default=False)
-
         result = migrate(
             src,
             dst,
             domain=domain,
             bundle_path=bundle_path,
             dry_run=dry_run,
-            confirm=confirm,
-            progress=lambda message: console.print(f"[dim]{message}[/dim]"),
+            confirm=_confirmer(dry_run=dry_run, yes=yes),
+            progress=_progress,
         )
     except (ConnectorError, MigrationError) as exc:
         console.print(f"[red]✗ {exc}[/red]")
@@ -184,7 +200,99 @@ def command(
     except typer.Abort:
         console.print("\nCancelled: nothing was written to the target.")
         raise typer.Exit(EXIT_CANCELLED) from None
+    except KeyboardInterrupt:
+        _stopped(bundle_path)
+    _finish(result, report_dir, dry_run=dry_run, repeat=repeat)
 
+
+def _progress(message: str) -> None:
+    console.print(f"[dim]{message}[/dim]")
+
+
+def _confirmer(*, dry_run: bool, yes: bool) -> Callable[[Preview], bool]:
+    def confirm(preview: Preview) -> bool:
+        _show_preview(preview)
+        if dry_run or yes:
+            return True
+        if not _interactive():
+            console.print("[red]Not running interactively: pass --yes to confirm.[/red]")
+            return False
+        return typer.confirm(f"\nWrite {preview.total} items to the target?", default=False)
+
+    return confirm
+
+
+def _resume_command(bundle_path: Path) -> str:
+    return f"usmp migrate --resume {shlex.quote(str(bundle_path))}"
+
+
+def _stopped(bundle_path: Path) -> NoReturn:
+    if progress_path(bundle_path).exists():
+        console.print(
+            "\n[yellow]Stopped.[/yellow] Everything written so far is recorded. To finish:"
+        )
+        console.print(f"  {_resume_command(bundle_path)}", soft_wrap=True, markup=False)
+    else:
+        console.print("\nStopped: nothing was written to the target.")
+    raise typer.Exit(EXIT_CANCELLED)
+
+
+def _resume(
+    bundle_path: Path,
+    target: str | None,
+    domain: str | None,
+    report_dir: Path,
+    *,
+    dry_run: bool,
+    yes: bool,
+    source: str | None,
+) -> None:
+    if source is not None:
+        console.print("[red]✗ --resume reads from the backup: leave out --from.[/red]")
+        raise typer.Exit(EXIT_ERROR)
+    try:
+        record = read_progress(bundle_path)
+        if domain is None:
+            domain = record[0].domain if record else _bundle_domain(bundle_path)
+        if target is not None:
+            dst = _connector(target, domain)
+        elif record is not None:
+            header = record[0]
+            dst = registry.get(header.target_connector)(header.target_config)
+        else:
+            console.print(
+                f"[red]✗ No progress record next to {bundle_path}: give --to to import this "
+                "backup into a target.[/red]"
+            )
+            raise typer.Exit(EXIT_ERROR)
+        result = resume(
+            dst,
+            bundle_path=bundle_path,
+            dry_run=dry_run,
+            confirm=_confirmer(dry_run=dry_run, yes=yes),
+            progress=_progress,
+        )
+    except (ConnectorError, MigrationError, ProgressError, BundleError) as exc:
+        console.print(f"[red]✗ {exc}[/red]")
+        console.print("  Nothing more was written to the target.")
+        raise typer.Exit(EXIT_ERROR) from exc
+    except typer.Abort:
+        console.print("\nCancelled: nothing more was written to the target.")
+        raise typer.Exit(EXIT_CANCELLED) from None
+    except KeyboardInterrupt:
+        _stopped(bundle_path)
+    _finish(result, report_dir, dry_run=dry_run, repeat=None)
+
+
+def _bundle_domain(bundle_path: Path) -> str | None:
+    with BundleReader(bundle_path) as bundle:
+        domains = {c.domain for c in bundle.manifest.counts}
+    return domains.pop() if len(domains) == 1 else None
+
+
+def _finish(
+    result: MigrationResult, report_dir: Path, *, dry_run: bool, repeat: str | None
+) -> None:
     if dry_run:
         _show_preview(result.preview)
         console.print("\n[bold]Dry run:[/bold] nothing was written to the target.")
@@ -194,6 +302,11 @@ def command(
         raise typer.Exit(EXIT_CANCELLED)
     paths = write_reports(result.report, report_dir)
     _show_report(result.report, paths)
+    if result.report.errors:
+        console.print("\n  Fix the problem above, then finish without writing anything twice:")
+        console.print(
+            f"  {_resume_command(result.preview.bundle_path)}", soft_wrap=True, markup=False
+        )
     if repeat is not None:
         console.print("\n  To run the same migration again without questions:")
         console.print(f"  {repeat}", soft_wrap=True, markup=False, highlight=False)

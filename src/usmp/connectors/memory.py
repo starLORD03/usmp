@@ -109,6 +109,14 @@ class _MemoryWriter(Writer):
     def __init__(self, connector: MemoryConnector) -> None:
         self._c = connector
 
+    def already_written(
+        self, items: Sequence[Item], known: Mapping[str, WriteResult]
+    ) -> Iterator[WriteResult]:
+        stored = {item.usmp_id: native_id for native_id, item in self._c.items.items()}
+        for item in items:
+            if item.usmp_id in stored:
+                yield WriteResult(usmp_id=item.usmp_id, native_id=stored[item.usmp_id])
+
     def write(self, items: Iterable[Item]) -> Iterator[WriteResult]:
         caps = self._c.capabilities()
         for item in items:

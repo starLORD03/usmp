@@ -317,6 +317,11 @@ class ItemResult(_Model):
     compared_fields: FieldList = Field(default_factory=list)
     mismatched_fields: FieldList = Field(default_factory=list)
     declared_loss_fields: FieldList = Field(default_factory=list)
+    already_present: bool = Field(
+        default=False,
+        description="The item was already on the target (written by an earlier or interrupted "
+        "run), so it was not written again; it was still read back and verified.",
+    )
 
 
 class ReportSummary(_Model):
@@ -325,6 +330,9 @@ class ReportSummary(_Model):
     verified_with_declared_loss: int = Field(ge=0)
     mismatch: int = Field(ge=0)
     missing: int = Field(ge=0)
+    already_present: int = Field(
+        default=0, ge=0, description="Items found on the target and not written again."
+    )
 
     @classmethod
     def from_results(cls, results: list[ItemResult]) -> Self:
@@ -337,6 +345,7 @@ class ReportSummary(_Model):
             verified_with_declared_loss=count(ItemStatus.VERIFIED_WITH_DECLARED_LOSS),
             mismatch=count(ItemStatus.MISMATCH),
             missing=count(ItemStatus.MISSING),
+            already_present=sum(1 for r in results if r.already_present),
         )
 
 

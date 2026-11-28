@@ -30,13 +30,17 @@ from usmp.domains.calendar import event_item
 from usmp.domains.calendar.model import Calendar, Event
 from usmp.sdk.connector import ConnectorError, ExportRecord
 
+USMP_ID = "X-USMP-ID"
+"""Marks a VEVENT (or a VCALENDAR file) with the ``usmp_id`` it was written from, so re-runs can
+recognise it. Not part of the calendar model: it identifies the item, it is not its content."""
+USMP_ID_PATTERN = re.compile(r"^usmp:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 UTC_NAMES = frozenset({"UTC", "Etc/UTC", "GMT", "Etc/GMT", "Z", "Universal", "Zulu"})
 HANDLED = frozenset(
     {
         "UID", "DTSTART", "DTEND", "DURATION", "SUMMARY", "DESCRIPTION", "LOCATION", "URL",
         "STATUS", "TRANSP", "CLASS", "RRULE", "RDATE", "EXDATE", "RECURRENCE-ID", "ORGANIZER",
         "ATTENDEE", "CATEGORIES", "ATTACH", "COLOR", "CONFERENCE", "X-USMP-PROVIDER-DATA",
-        "X-GOOGLE-CONFERENCE", "X-MICROSOFT-SKYPETEAMSMEETINGURL",
+        "X-GOOGLE-CONFERENCE", "X-MICROSOFT-SKYPETEAMSMEETINGURL", USMP_ID,
     }
 )  # fmt: skip
 # Bookkeeping every target rewrites; deliberately outside the calendar model (spec §3).
@@ -569,18 +573,38 @@ def build_vcalendar(
     properties: Mapping[str, str] | None = None,
     *,
     timezones: bool = True,
+    usmp_ids: Sequence[str] | None = None,
 ) -> bytes:
-    """A complete VCALENDAR document with the given events and (by default) their time zones."""
+    """A complete VCALENDAR document with the given events and (by default) their time zones.
+
+    ``usmp_ids``, one per event, marks each VEVENT with the item it was written from.
+    """
     cal = icalendar.Calendar()
     cal.add("prodid", "-//USMP//usmp-protocol//EN")
     cal.add("version", "2.0")
     for name, value in (properties or {}).items():
         cal.add(name, value)
-    for payload in events:
-        cal.add_component(vevent(payload))
+    events = list(events)
+    if usmp_ids is not None and len(usmp_ids) != len(events):
+        raise ValueError("give one usmp_id per event")
+    for n, payload in enumerate(events):
+        component = vevent(payload)
+        if usmp_ids is not None:
+            component.add(USMP_ID, usmp_ids[n])
+        cal.add_component(component)
     if timezones:
         cal.add_missing_timezones()
     return bytes(cal.to_ical())
+
+
+def marked_events(
+    vcalendar: Any, native_id_for: Callable[[str, str | None], str]
+) -> Iterator[tuple[str, str]]:
+    """``(usmp_id, native_id)`` for every VEVENT that carries an X-USMP-ID marker."""
+    for ev in vcalendar.walk("VEVENT"):
+        marker = ev.get(USMP_ID)
+        if marker is not None and USMP_ID_PATTERN.fullmatch(str(marker)):
+            yield str(marker), native_id_for(str(ev.get("UID") or ""), recurrence_key(ev))
 
 
 def parse_vcalendar(data: bytes | str, where: str) -> Any:

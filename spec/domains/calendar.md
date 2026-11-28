@@ -111,3 +111,9 @@ Implementations MUST reject items of this domain whose payload is invalid or not
   ("Join online: …"); readers remove exactly that text again, so the notes round-trip unchanged.
 * A provider that cannot store a field (e.g. no per-event colour) declares it absent from
   `write_fields`; USMP then reports the loss before migrating.
+* **Marking written items (core §8.1).** iCalendar writers add `X-USMP-ID:<usmp_id>` to each
+  VEVENT they write, and `.ics` files carry the calendar's `X-USMP-ID` on the VCALENDAR. CalDAV
+  writers also set the WebDAV property `{https://github.com/starLORD03/usmp}usmp-id` on calendars
+  they create, where the server allows it. Google Calendar writers use the private extended
+  property `usmp_id`. Readers MUST NOT put these markers into the payload or `provider_data`:
+  they identify an item, they are not part of it.

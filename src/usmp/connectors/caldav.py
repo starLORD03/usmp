@@ -22,6 +22,7 @@ from urllib.parse import unquote, urlparse
 
 from caldav.davclient import DAVClient
 from caldav.elements import cdav, dav, ical
+from caldav.elements.base import ValuedBaseElement
 from caldav.lib import error as caldav_error
 from caldav.lib.url import URL
 
@@ -30,6 +31,7 @@ from usmp.connectors._ical import (
     build_vcalendar,
     calendar_capabilities,
     event_records,
+    marked_events,
     parse_vcalendar,
     recurrence_key,
     unstorable_fields,
@@ -50,6 +52,12 @@ from usmp.sdk.connector import (
 NAME = "caldav"
 _SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS", "PROPFIND", "REPORT"})
 _MULTIGET_BATCH = 100  # events fetched per calendar-multiget request
+
+
+class _UsmpId(ValuedBaseElement):
+    """A WebDAV property marking a calendar USMP created with the calendar's ``usmp_id``."""
+
+    tag = "{https://github.com/starLORD03/usmp}usmp-id"
 
 
 @contextlib.contextmanager
@@ -101,8 +109,21 @@ def _event_native_id(resource_url: str) -> Any:
     return native_id
 
 
-def _records_for_resource(obj: Any, parent: str) -> Iterator[ExportRecord]:
-    url = str(obj.url)
+def _event_losses(item: Item) -> tuple[LossRecord, ...]:
+    return tuple(
+        LossRecord(
+            usmp_id=item.usmp_id,
+            field=f,
+            reason=LossReason.VALUE_CONVERTED,
+            stage="import",
+            detail="iCalendar cannot store this value exactly",
+        )
+        for f in unstorable_fields(item.payload)
+    )
+
+
+def _records_for_resource(obj: Any, parent: str, url: str | None = None) -> Iterator[ExportRecord]:
+    url = url or str(obj.url)
     vcal = parse_vcalendar(obj.data, url)
     yield from event_records(
         vcal, connector=NAME, parent=parent, native_id_for=_event_native_id(url), where=url
@@ -147,12 +168,15 @@ class _CalDavWriter(Writer):
         self._client: Any = client  # the caldav library is only partly typed
         self._only = only
         self._fresh: set[str] = set()  # calendars created by this writer
+        self._placed: dict[str, Any] = {}  # calendar usmp_id -> calendar an earlier run made
 
     def _target_calendars(self) -> dict[str, Any]:
         with _errors("listing calendars"):
             return {_calendar_payload(c)["name"]: c for c in self._client.principal().calendars()}
 
-    def _make(self, existing: dict[str, Any], name: str) -> tuple[Any, str]:
+    def _make(
+        self, existing: dict[str, Any], name: str, usmp_id: str | None = None
+    ) -> tuple[Any, str]:
         unique, n = name, 1
         while unique in existing:
             n += 1
@@ -161,6 +185,11 @@ class _CalDavWriter(Writer):
             cal = self._client.principal().make_calendar(name=unique)
         existing[unique] = cal
         self._fresh.add(str(cal.url))
+        if usmp_id:
+            # Lets a re-run recognise the calendar even while it is empty. Optional: servers
+            # that refuse custom properties are still recognised by the events inside.
+            with contextlib.suppress(caldav_error.DAVError, OSError):
+                cal.set_properties([_UsmpId(usmp_id)])
         return cal, unique
 
     def _save(self, cal: Any, uid: str, data: str) -> str:
@@ -184,11 +213,62 @@ class _CalDavWriter(Writer):
             raise ConnectorError(f"the server refused event {uid} (HTTP {response.status})")
         return url
 
+    def already_written(
+        self, items: Sequence[Item], known: Mapping[str, WriteResult]
+    ) -> Iterator[WriteResult]:
+        with _errors("looking for items an earlier run wrote"):
+            calendars = self._client.principal().calendars()
+            marked: dict[str, Any] = {}  # calendar usmp_id -> calendar
+            events: dict[str, tuple[Any, str]] = {}  # event usmp_id -> (calendar, native id)
+            for cal in calendars:
+                props = cal.get_properties([_UsmpId()])
+                if props.get(_UsmpId.tag):
+                    marked[str(props[_UsmpId.tag])] = cal
+                for obj in cal.events():
+                    url = str(obj.url)
+                    for usmp_id, native_id in marked_events(
+                        parse_vcalendar(obj.data, url), _event_native_id(url)
+                    ):
+                        events[usmp_id] = (cal, native_id)
+        by_url = {str(c.url): c for c in calendars}
+        # A calendar holding events written from this calendar's events is its earlier copy.
+        holding: dict[str, Any] = {}
+        for item in items:
+            if item.type == "event" and item.usmp_id in events and item.parent:
+                holding.setdefault(item.parent, events[item.usmp_id][0])
+
+        for item in items:
+            if item.type == "calendar" and self._only is None:
+                earlier = known.get(item.usmp_id)
+                cal = (
+                    marked.get(item.usmp_id)
+                    or (by_url.get(earlier.native_id) if earlier else None)
+                    or holding.get(item.usmp_id)
+                )
+                if cal is None:
+                    continue
+                self._placed[item.usmp_id] = cal
+                losses = list(earlier.losses) if earlier else self._present_losses(cal, item)
+                yield WriteResult(item.usmp_id, str(cal.url), tuple(losses))
+            elif item.type == "event" and item.usmp_id in events:
+                yield WriteResult(item.usmp_id, events[item.usmp_id][1], _event_losses(item))
+
+    def _present_losses(self, cal: Any, item: Item) -> list[LossRecord]:
+        with _errors("reading a calendar"):
+            name = _calendar_payload(cal)["name"]
+        losses = []
+        if name != item.payload["name"]:
+            losses.append(self._loss(item, "name", f"stored as {name!r}"))
+        if "time_zone" in item.payload:
+            losses.append(
+                self._loss(item, "time_zone", "default calendar zone is not set over CalDAV")
+            )
+        return losses
+
     def write(self, items: Iterable[Item]) -> Iterator[WriteResult]:
         items = list(items)
         existing = self._target_calendars()
-        by_source: dict[str, Any] = {}
-        results: dict[str, WriteResult] = {}
+        by_source: dict[str, Any] = dict(self._placed)
         merged: Any = None
         if self._only:
             merged = existing.get(self._only)
@@ -204,7 +284,7 @@ class _CalDavWriter(Writer):
             if merged is not None:
                 cal, name = merged, self._only
             else:
-                cal, name = self._make(existing, str(item.payload["name"]))
+                cal, name = self._make(existing, str(item.payload["name"]), item.usmp_id)
             if name != item.payload["name"]:
                 losses.append(self._loss(item, "name", f"stored as {name!r}"))
             if merged is not None:
@@ -217,7 +297,7 @@ class _CalDavWriter(Writer):
             else:
                 losses += self._apply_properties(cal, item)
             by_source[item.usmp_id] = cal
-            results[item.usmp_id] = WriteResult(item.usmp_id, str(cal.url), tuple(losses))
+            yield WriteResult(item.usmp_id, str(cal.url), tuple(losses))
 
         # One CalDAV resource per UID: the master event plus its overridden occurrences.
         groups: dict[tuple[str, str], list[Item]] = defaultdict(list)
@@ -233,7 +313,9 @@ class _CalDavWriter(Writer):
             groups[(str(cal.url), str(item.payload["uid"]))].append(item)
 
         for (cal_url, uid), group in groups.items():
-            data = build_vcalendar([i.payload for i in group]).decode()
+            data = build_vcalendar(
+                [i.payload for i in group], usmp_ids=[i.usmp_id for i in group]
+            ).decode()
             with _errors(f"saving event {uid}"):
                 saved_url = self._save(calendars[cal_url], uid, data)
             for item in group:
@@ -242,22 +324,9 @@ class _CalDavWriter(Writer):
                     if "recurrence_id" in item.payload
                     else None
                 )
-                event_losses = tuple(
-                    LossRecord(
-                        usmp_id=item.usmp_id,
-                        field=f,
-                        reason=LossReason.VALUE_CONVERTED,
-                        stage="import",
-                        detail="iCalendar cannot store this value exactly",
-                    )
-                    for f in unstorable_fields(item.payload)
+                yield WriteResult(
+                    item.usmp_id, _event_native_id(saved_url)(uid, rid), _event_losses(item)
                 )
-                results[item.usmp_id] = WriteResult(
-                    item.usmp_id, _event_native_id(saved_url)(uid, rid), event_losses
-                )
-
-        for item in items:
-            yield results[item.usmp_id]
 
     def _apply_properties(self, cal: Any, item: Item) -> list[LossRecord]:
         losses = []
@@ -313,8 +382,13 @@ class _CalDavWriter(Writer):
                     # Resources the server no longer has are skipped: they count as missing.
                     batch = resources[start : start + _MULTIGET_BATCH]
                     objects = cal.multiget([URL.objectify(u) for u in batch])
+                # Servers may answer with differently escaped URLs (a%40b.ics vs a@b.ics).
+                asked = {unquote(u): u for u in batch}
                 for obj in objects:
-                    for record in _records_for_resource(obj, parent.usmp_id):
+                    resource = asked.get(unquote(str(obj.url)))
+                    if resource is None:
+                        continue
+                    for record in _records_for_resource(obj, parent.usmp_id, resource):
                         if record.item.source.native_id in wanted:
                             yield record.item
 

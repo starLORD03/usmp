@@ -112,13 +112,26 @@ class _JsonDirReader(Reader):
             yield ExportRecord(item=item)
 
 
+def _native_id(item: Item) -> str:
+    return f"{item.type}/{item.usmp_id.removeprefix('usmp:')}"
+
+
 class _JsonDirWriter(Writer):
     def __init__(self, root: Path) -> None:
         self._root = root
 
+    def already_written(
+        self, items: Sequence[Item], known: Mapping[str, WriteResult]
+    ) -> Iterator[WriteResult]:
+        # Files are named after the usmp_id, so the target itself says what is there.
+        for item in items:
+            native_id = _native_id(item)
+            if (self._root / f"{native_id}.json").is_file():
+                yield WriteResult(usmp_id=item.usmp_id, native_id=native_id)
+
     def write(self, items: Iterable[Item]) -> Iterator[WriteResult]:
         for item in items:
-            native_id = f"{item.type}/{item.usmp_id.removeprefix('usmp:')}"
+            native_id = _native_id(item)
             target = self._root / f"{native_id}.json"
             if target.exists():
                 raise ConnectorError(f"refusing to overwrite existing item {target}")

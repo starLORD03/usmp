@@ -350,6 +350,7 @@ def sample() -> list[Item]:
 
 
 class TestIcsConformance(ConnectorConformance):
+    finds_written = True
     domain = "calendar"
 
     @pytest.fixture(autouse=True)
