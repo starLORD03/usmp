@@ -1,4 +1,5 @@
 import json
+import os
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from pathlib import Path
 
@@ -186,7 +187,8 @@ class TestProgressRecord:
         header = json.loads(path.read_text().splitlines()[0])
         assert header["format"] == "usmp-progress"
         assert header["target_config"] == {"domain": "demo"}
-        assert path.stat().st_mode & 0o077 == 0
+        if os.name == "posix":
+            assert path.stat().st_mode & 0o077 == 0
 
     def test_safe_config_drops_secret_keys(self) -> None:
         config = {"url": "u", "password": "p", "password_env": "PW", "api_token": "t", "x_key": "k"}

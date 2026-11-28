@@ -2,7 +2,7 @@ from collections.abc import Iterable, Iterator
 from pathlib import Path
 
 import pytest
-from typer.testing import CliRunner
+from typer.testing import CliRunner, Result
 
 from tests.conftest import make_event
 from usmp.cli import migrate as migrate_cli
@@ -117,13 +117,18 @@ def test_interactive_confirmation(
     assert not (tmp_path / "new").exists()
 
 
+def text(result: Result) -> str:
+    """Output with Rich's line wrapping undone."""
+    return " ".join(result.output.split())
+
+
 def test_rerun_into_same_target_writes_nothing_twice(tmp_path: Path, source_dir: Path) -> None:
     assert invoke(tmp_path, source_dir, "--yes").exit_code == 0
 
     second = invoke(tmp_path, source_dir, "--yes")
 
     assert second.exit_code == migrate_cli.EXIT_OK, second.output
-    assert "4 item(s) were already in the target" in second.output
+    assert "4 item(s) were already in the target" in text(second)
     assert len(list((tmp_path / "new").rglob("*.json"))) == 4
 
 
@@ -160,12 +165,12 @@ def test_interrupted_migration_can_be_resumed(
         stop_writing(patch, 2, KeyboardInterrupt())
         stopped = invoke(tmp_path, source_dir, "--yes")
     assert stopped.exit_code == migrate_cli.EXIT_CANCELLED
-    assert "usmp migrate --resume" in stopped.output
+    assert "usmp migrate --resume" in text(stopped)
 
     resumed = resume_cli(tmp_path, "--yes")
 
     assert resumed.exit_code == migrate_cli.EXIT_OK, resumed.output
-    assert "already in the target" in resumed.output
+    assert "already in the target" in text(resumed)
     assert len(list((tmp_path / "new").rglob("*.json"))) == 4
 
 
@@ -177,8 +182,8 @@ def test_failed_write_suggests_resume(
     result = invoke(tmp_path, source_dir, "--yes")
 
     assert result.exit_code == migrate_cli.EXIT_NOT_VERIFIED
-    assert "disk full" in result.output
-    assert "usmp migrate --resume" in result.output
+    assert "disk full" in text(result)
+    assert "usmp migrate --resume" in text(result)
 
 
 def test_stopped_before_writing_says_nothing_was_written(
@@ -192,7 +197,7 @@ def test_stopped_before_writing_says_nothing_was_written(
     result = invoke(tmp_path, source_dir, "--yes")
 
     assert result.exit_code == migrate_cli.EXIT_CANCELLED
-    assert "nothing was written" in result.output
+    assert "nothing was written" in text(result)
 
 
 def test_resume_imports_a_backup_into_a_new_target(tmp_path: Path, source_dir: Path) -> None:
@@ -202,7 +207,7 @@ def test_resume_imports_a_backup_into_a_new_target(tmp_path: Path, source_dir: P
     imported = resume_cli(tmp_path, "--yes", "--to", f"jsondir:path={tmp_path / 'other'}")
 
     assert missing_target.exit_code == migrate_cli.EXIT_ERROR
-    assert "give --to" in missing_target.output
+    assert "give --to" in text(missing_target)
     assert imported.exit_code == migrate_cli.EXIT_OK, imported.output
     assert len(list((tmp_path / "other").rglob("*.json"))) == 4
 
@@ -215,10 +220,10 @@ def test_resume_problems_are_explained(tmp_path: Path, source_dir: Path) -> None
     other = resume_cli(tmp_path, "--to", "memory:")
 
     assert with_source.exit_code == migrate_cli.EXIT_ERROR
-    assert "leave out --from" in with_source.output
-    assert dry.exit_code == 0 and "nothing was written" in dry.output
+    assert "leave out --from" in text(with_source)
+    assert dry.exit_code == 0 and "nothing was written" in text(dry)
     assert other.exit_code == migrate_cli.EXIT_ERROR
-    assert "Nothing more was written" in other.output
+    assert "Nothing more was written" in text(other)
 
 
 def test_preview_explains_losses_and_blocked_items(
