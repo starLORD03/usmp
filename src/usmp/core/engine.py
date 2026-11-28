@@ -265,6 +265,7 @@ def _write_and_verify(
     known: Mapping[str, WriteResult],
     progress: Callable[[str], None],
     started: datetime,
+    advance: Callable[[int, int], None],
 ) -> VerificationReport:
     """Import whatever is not on the target yet, read everything back and verify it."""
     domain = preview.domain
@@ -292,11 +293,13 @@ def _write_and_verify(
                 skipped = f" ({len(present)} already there)" if present else ""
                 progress(f"Writing {len(remaining)} items to {target.display_name}{skipped}…")
                 written = 0
+                advance(0, len(remaining))
                 try:
                     for result in writer.write(remaining):
                         results[result.usmp_id] = result
                         log.record(result)
                         written += 1
+                        advance(written, len(remaining))
                 except ConnectorError as exc:
                     errors.append(f"writing stopped after {written} items: {exc}")
             progress("Reading items back to verify…")
@@ -363,11 +366,13 @@ def migrate(
     confirm: Callable[[Preview], bool] = lambda _preview: True,
     progress: Callable[[str], None] = lambda _message: None,
     selection: Selection | None = None,
+    advance: Callable[[int, int], None] = lambda _done, _total: None,
 ) -> MigrationResult:
     """Migrate one domain from ``source`` to ``target``.
 
     Everything the source returns is saved in the backup bundle; with a ``selection`` only the
-    part it keeps is written and verified (spec §8.2).
+    part it keeps is written and verified (spec §8.2). ``progress`` receives a message at each
+    step and ``advance`` the number of items written so far out of those to write.
 
     Raises :class:`MigrationError` if the migration cannot start (incompatible connectors, a
     misbehaving source). Problems during import are recorded in the report instead.
@@ -411,7 +416,9 @@ def migrate(
         selection=selection,
     )
     with log:
-        report = _write_and_verify(preview, items, target, target_caps, log, {}, progress, started)
+        report = _write_and_verify(
+            preview, items, target, target_caps, log, {}, progress, started, advance
+        )
     return MigrationResult(preview=preview, report=report)
 
 
@@ -423,6 +430,7 @@ def resume(
     confirm: Callable[[Preview], bool] = lambda _preview: True,
     progress: Callable[[str], None] = lambda _message: None,
     selection: Selection | None = None,
+    advance: Callable[[int, int], None] = lambda _done, _total: None,
 ) -> MigrationResult:
     """Finish a migration from its backup bundle, without reading the source again.
 
@@ -503,6 +511,6 @@ def resume(
     )
     with ProgressLog(bundle_path, header, known) as log:
         report = _write_and_verify(
-            preview, items, target, target_caps, log, known, progress, started
+            preview, items, target, target_caps, log, known, progress, started, advance
         )
     return MigrationResult(preview=preview, report=report)

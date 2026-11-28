@@ -48,6 +48,17 @@ $ usmp migrate --from caldav:url=https://cloud.example.com/remote.php/dav,userna
 If a calendar with the same name already exists on the target, a new one is created with a
 suffix (`Work (2)`) and the rename is shown in the report as a declared loss.
 
+## Large calendars and busy servers
+
+Events going into calendars USMP creates are uploaded four at a time. Set `workers` to change
+that (1 to 16): `caldav:url=…,username=…,workers=8`. Servers that limit requests (iCloud does)
+may need fewer.
+
+When a server says it is busy, or a connection drops, USMP waits and tries again, longer each
+time and as long as the server asks (`Retry-After`), for up to about five minutes. An upload whose
+answer got lost is recognised when it is tried again, so nothing is written twice. If the server
+stays unreachable, the run stops with the exact `usmp migrate --resume` command to finish later.
+
 ## Manual end-to-end checklist
 
 CI tests the connector against a Radicale server on every change. Before a release, also run

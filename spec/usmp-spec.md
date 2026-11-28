@@ -179,6 +179,12 @@ twice or change items already on the target.
 * Report items carry `already_present: true` when they were not written by this run, and the
   summary counts them in `already_present`. Both are informational: they do not change an item's
   status or whether the migration is ok.
+* Writers MAY retry requests that fail for a moment (rate limits, busy servers, dropped
+  connections). A request whose earlier try may have been carried out without the answer
+  arriving MUST only be repeated if repeating it cannot write the item twice (a conditional
+  create such as `If-None-Match: *`, or an import keyed by UID), or after the writer has looked
+  for its own earlier write by `usmp_id`. A conflict caused by the writer's own earlier try is
+  that item's successful write, not an error.
 
 ### 8.2 Selecting part of the data
 

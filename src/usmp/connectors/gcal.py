@@ -14,11 +14,10 @@ and sends no invitations; modified occurrences update the matching instance of t
 
 import hashlib
 import json
-import time
 from collections import defaultdict
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from datetime import UTC, date, datetime, timedelta
-from typing import Any, ClassVar
+from typing import Any, ClassVar, NoReturn
 from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
@@ -50,13 +49,18 @@ from usmp.sdk.connector import (
     Writer,
     WriteResult,
 )
+from usmp.sdk.retry import RetryPolicy, TransientError, parse_retry_after, retrying
 
 NAME = "google"
 API = "https://www.googleapis.com/calendar/v3"
 READ_SCOPE = "https://www.googleapis.com/auth/calendar.readonly"
 WRITE_SCOPE = "https://www.googleapis.com/auth/calendar"
-_RETRY_STATUS = frozenset({429, 500, 502, 503, 504})
-_MAX_ATTEMPTS = 5
+# 429 and a rate-limit 403 mean the request was not carried out; 5xx answers may hide a write.
+_NOT_DONE_STATUS = frozenset({429})
+_UNCLEAR_STATUS = frozenset({500, 502, 503, 504})
+# Repeating these cannot change the outcome. POST is only repeated when the caller can find its
+# own earlier write (``recover``) or the server answered that nothing was done.
+_REPEATABLE = frozenset({"GET", "PUT", "PATCH", "DELETE"})
 
 CALENDAR_READ = ["color", "description", "name", "time_zone"]
 CALENDAR_WRITE = CALENDAR_READ
@@ -141,42 +145,87 @@ def _require_google() -> Any:
 class _Api:
     """Thin client for the Calendar API with retries and plain-language errors."""
 
+    policy: ClassVar[RetryPolicy | None] = None  # None: the SDK default
+
     def __init__(self, session: Any, *, read_only: bool) -> None:
         self._session = session
         self._read_only = read_only
 
-    def call(self, method: str, path: str, *, params: Mapping[str, Any] | None = None,
-             body: Any = None) -> Any:  # fmt: skip
+    def call(
+        self,
+        method: str,
+        path: str,
+        *,
+        params: Mapping[str, Any] | None = None,
+        body: Any = None,
+        recover: Callable[[], Any] | None = None,
+    ) -> Any:
+        """Send one request, retrying rate limits, busy servers and dropped connections.
+
+        ``recover`` looks for the result of an earlier try of a create whose answer never
+        arrived. Without it, a create is only retried when Google said it did nothing.
+        """
         if self._read_only and method != "GET":
             raise ConnectorError(f"blocked a {method} request: this source is read-only")
         url = API + path
-        for attempt in range(_MAX_ATTEMPTS):
+        repeatable = method in _REPEATABLE
+        unclear: list[bool] = []  # an earlier try may have been carried out
+
+        def attempt() -> Any:
             try:
                 response = self._session.request(method, url, params=params, json=body, timeout=60)
             except OSError as exc:
-                raise ConnectorError(f"cannot reach Google Calendar: {exc}") from exc
+                return self._unclear(f"cannot reach Google Calendar: {exc}", None, unclear,
+                                     repeatable or recover is not None)  # fmt: skip
             status = response.status_code
-            rate_limited = status == 403 and "rateLimitExceeded" in response.text
-            if (status in _RETRY_STATUS or rate_limited) and attempt < _MAX_ATTEMPTS - 1:
-                time.sleep(min(2**attempt, 30))
-                continue
-            if status == 401:
-                raise ConnectorError(
-                    "Google sign-in expired or was revoked: run `usmp auth google` again"
-                )
-            if status == 403 and "insufficient" in response.text.lower():
-                raise ConnectorError(
-                    "this Google sign-in is read-only: run `usmp auth google --write` to allow "
-                    "writing"
-                )
-            if status == 409:
-                raise ConnectorError("the event already exists in the target calendar")
-            if status >= 400:
-                raise ConnectorError(f"Google Calendar error {status}: {response.text[:300]}")
-            return response.json() if response.content else None
-        raise ConnectorError(
-            "Google Calendar kept refusing requests; try again later"
-        )  # pragma: no cover
+            wait = parse_retry_after(response.headers.get("Retry-After"))
+            text = response.text
+            if status in _NOT_DONE_STATUS or (
+                status == 403 and "ratelimitexceeded" in text.lower()
+            ):
+                raise TransientError(f"Google Calendar is rate limiting (HTTP {status})",
+                                     retry_after=wait)  # fmt: skip
+            if status in _UNCLEAR_STATUS:
+                return self._unclear(f"Google Calendar error {status}", wait, unclear,
+                                     repeatable or recover is not None, text)  # fmt: skip
+            if status == 409 and unclear and recover is not None:
+                found = recover()
+                if found is not None:
+                    return found
+            return self._answer(status, text, response)
+
+        return retrying(
+            attempt,
+            what="Google Calendar",
+            policy=self.policy,
+            before_retry=(lambda: recover() if unclear else None) if recover else None,
+        )
+
+    @staticmethod
+    def _unclear(
+        message: str, wait: float | None, unclear: list[bool], retry: bool, text: str = ""
+    ) -> NoReturn:
+        if not retry:
+            detail = f": {text[:300]}" if text else ""
+            raise ConnectorError(f"{message}{detail} (not retried: it might have been saved)")
+        unclear.append(True)
+        raise TransientError(message, retry_after=wait)
+
+    @staticmethod
+    def _answer(status: int, text: str, response: Any) -> Any:
+        if status == 401:
+            raise ConnectorError(
+                "Google sign-in expired or was revoked: run `usmp auth google` again"
+            )
+        if status == 403 and "insufficient" in text.lower():
+            raise ConnectorError(
+                "this Google sign-in is read-only: run `usmp auth google --write` to allow writing"
+            )
+        if status == 409:
+            raise ConnectorError("the event already exists in the target calendar")
+        if status >= 400:
+            raise ConnectorError(f"Google Calendar error {status}: {text[:300]}")
+        return response.json() if response.content else None
 
     def pages(self, path: str, params: Mapping[str, Any]) -> Iterator[dict[str, Any]]:
         token: str | None = None
@@ -618,7 +667,16 @@ class _GoogleWriter(Writer):
             body["description"] = payload["description"]
         if payload.get("time_zone"):
             body["timeZone"] = payload["time_zone"]
-        cal_id = str(self._api.call("POST", "/calendars", body=body)["id"])
+        known = set(existing.values())
+
+        def find_created() -> dict[str, Any] | None:
+            # A calendar with this name that was not there before is the one we just made.
+            for entry in self._api.pages("/users/me/calendarList", {}):
+                if entry.get("summary") == unique and entry["id"] not in known:
+                    return dict(entry)
+            return None
+
+        cal_id = str(self._api.call("POST", "/calendars", body=body, recover=find_created)["id"])
         if payload.get("color"):
             colors = {"backgroundColor": payload["color"], "foregroundColor": "#000000"}
             self._api.call(
@@ -748,11 +806,31 @@ class _GoogleWriter(Writer):
                 )
             else:
                 saved = self._api.call(
-                    "POST", f"/calendars/{path_cal}/events/import", params=_CONF, body=body
+                    "POST",
+                    f"/calendars/{path_cal}/events/import",
+                    params=_CONF,
+                    body=body,
+                    recover=self._finder(cal_id, str(item.payload["uid"]), item.usmp_id),
                 )
                 masters[(cal_id, str(item.payload["uid"]))] = str(saved["id"])
             losses = [_import_loss(item, f, d) for f, d in changed]
             yield WriteResult(item.usmp_id, f"{cal_id}/{saved['id']}", tuple(losses))
+
+    def _finder(self, cal_id: str, uid: str, usmp_id: str) -> Callable[[], Any]:
+        """Find the series this run imported, if a try whose answer was lost stored it."""
+
+        def find() -> dict[str, Any] | None:
+            params = {"iCalUID": uid, "showDeleted": "false"}
+            for ev in self._api.pages(f"/calendars/{quote(cal_id, safe='')}/events", params):
+                if (
+                    ev.get("iCalUID") == uid
+                    and "recurringEventId" not in ev
+                    and _marker(ev) == usmp_id
+                ):
+                    return dict(ev)
+            return None
+
+        return find
 
     def read_back(self, domain: str, native_ids: Sequence[str]) -> Iterator[Item]:
         entries = {e["id"]: e for e in self._api.pages("/users/me/calendarList", {})}
@@ -860,4 +938,4 @@ class GoogleCalendarConnector(Connector):
         return _GoogleWriter(_Api(session, read_only=False), self.config.get("calendar"))
 
 
-__all__ = ["GoogleCalendarConnector", "credentials", "time"]
+__all__ = ["GoogleCalendarConnector", "credentials"]

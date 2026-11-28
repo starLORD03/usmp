@@ -7,7 +7,7 @@ from typing import Any
 import pytest
 from typer.testing import CliRunner
 
-from tests.connectors.fake_google import FakeGoogle
+from tests.connectors.fake_google import NO_WAIT, FakeGoogle
 from usmp.cli.app import app
 from usmp.connectors import gcal
 from usmp.connectors._ical import build_vcalendar
@@ -17,9 +17,15 @@ from usmp.core.engine import migrate
 from usmp.core.models import Item, ItemStatus
 from usmp.domains.calendar import calendar_item, event_item
 from usmp.sdk.connector import ConnectorError
+from usmp.sdk.retry import RetryPolicy
 from usmp.testing import ConnectorConformance
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "ics"
+
+
+@pytest.fixture(autouse=True)
+def _no_waiting(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(gcal._Api, "policy", NO_WAIT)
 
 
 @pytest.fixture
@@ -28,7 +34,6 @@ def google(monkeypatch: pytest.MonkeyPatch) -> Iterator[FakeGoogle]:
     monkeypatch.setattr(
         GoogleCalendarConnector, "session_for", staticmethod(lambda account, write: fake.session)
     )
-    monkeypatch.setattr(gcal.time, "sleep", lambda seconds: None)
     with fake:
         yield fake
 
@@ -522,6 +527,92 @@ class TestApi:
         google.fail_next = [(status, text)]
         with pytest.raises(ConnectorError, match=message):
             list(connector().open_reader().read("calendar"))
+
+    def test_rate_limits_and_retry_after(
+        self, google: FakeGoogle, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        slept: list[float] = []
+        monkeypatch.setattr(gcal._Api, "policy", RetryPolicy(sleep=slept.append, base=0.01))
+        seed(google)
+        google.fail_next = [
+            (429, "slow down", {"Retry-After": "7"}),
+            (403, '{"reason": "userRateLimitExceeded"}'),
+            (502, "bad gateway"),
+        ]
+
+        assert len(list(connector().open_reader().read("calendar"))) > 1
+        assert slept[0] == 7 and len(slept) == 3
+
+    def test_gives_up_when_google_stays_busy(self, google: FakeGoogle) -> None:
+        google.fail_next = [(503, "busy")] * 10
+        with pytest.raises(ConnectorError, match=r"Google Calendar kept failing.*error 503"):
+            list(connector().open_reader().read("calendar"))
+
+    def test_lost_answers_never_duplicate_writes(self, google: FakeGoogle, tmp_path: Path) -> None:
+        from usmp.connectors.memory import MemoryConnector
+
+        google.lose_answers = [
+            ("/calendars", 502),
+            ("/events/import", 500),
+            ("/events/import", 503),
+        ]
+        source = MemoryConnector({"domain": "calendar"}, items=sample())
+
+        result = migrate(source, connector(), bundle_path=tmp_path / "b.usmp")
+
+        assert result.report is not None and result.report.ok, result.report
+        assert google.lose_answers == []
+        [cal_id] = list(google.calendars)  # nothing was there before: this one was created
+        uids = sorted(
+            e["iCalUID"] for e in google.events[cal_id].values() if "recurringEventId" not in e
+        )
+        assert uids == ["d@x", "s@x"]
+
+    def test_failed_creates_are_tried_again(self, google: FakeGoogle, tmp_path: Path) -> None:
+        from usmp.connectors.memory import MemoryConnector
+
+        google.refuse = [("/calendars", 500), ("/events/import", 502)]
+        source = MemoryConnector({"domain": "calendar"}, items=sample())
+
+        result = migrate(source, connector(), bundle_path=tmp_path / "b.usmp")
+
+        assert result.report is not None and result.report.ok, result.report
+        assert google.refuse == []
+        assert len(google.calendars) == 1, "one calendar created, not two"
+
+    def test_own_write_refused_as_duplicate_is_recognised(self) -> None:
+        answers = [(500, "backend error"), (409, "duplicate")]
+        looks = [None, {"id": "ev1"}]
+
+        class Session:
+            def request(self, *a: object, **k: object) -> object:
+                status, text = answers.pop(0)
+                return type("R", (), {"status_code": status, "text": text, "headers": {}})()
+
+        found = _Api(Session(), read_only=False).call(
+            "POST", "/calendars/c/events/import", body={}, recover=lambda: looks.pop(0)
+        )
+
+        assert found == {"id": "ev1"}
+        assert answers == [] and looks == []
+
+    def test_duplicate_without_earlier_try_is_a_conflict(self) -> None:
+        class Session:
+            def request(self, *a: object, **k: object) -> object:
+                return type("R", (), {"status_code": 409, "text": "dup", "headers": {}})()
+
+        with pytest.raises(ConnectorError, match="already exists"):
+            _Api(Session(), read_only=False).call(
+                "POST", "/x", body={}, recover=lambda: pytest.fail("not ours to look for")
+            )
+
+    def test_creates_are_not_repeated_blindly(self) -> None:
+        class Dropped:
+            def request(self, *a: object, **k: object) -> object:
+                raise ConnectionError("reset by peer")
+
+        with pytest.raises(ConnectorError, match="not retried: it might have been saved"):
+            _Api(Dropped(), read_only=False).call("POST", "/calendars", body={})
 
     def test_network_error(self) -> None:
         class Down:
