@@ -196,7 +196,8 @@ def _conference(prop: Any, conv: Converter) -> dict[str, Any]:
         )
     return {
         "uri": str(prop),
-        "label": prop.params.get("LABEL"),
+        # Trimmed here, as canonical form would, so the notes block matches (see _param).
+        "label": (prop.params.get("LABEL") or "").strip() or None,
         "features": [f.lower() for f in features if f in FEATURES],
     }
 
@@ -259,6 +260,7 @@ def event_payload(ev: Any, conv: Converter) -> dict[str, Any]:
             conv.lose(
                 "end", "zero-length all-day event treated as one day", LossReason.VALUE_CONVERTED
             )
+    drop_backwards_end(payload, conv)
 
     for prop, key in (("SUMMARY", "title"), ("DESCRIPTION", "description"),
                       ("LOCATION", "location"), ("URL", "url")):  # fmt: skip
@@ -566,6 +568,29 @@ def event_records(
             for f, r, d in conv.losses
         ]
         yield ExportRecord(item=item, losses=losses, raw=ev.to_ical(), raw_name=raw_name(native_id))
+
+
+def drop_backwards_end(payload: dict[str, Any], conv: Converter) -> None:
+    """Move an event that ends before it starts without its end, and declare that.
+
+    The calendar model needs ``end`` after ``start`` (spec ``calendar.md`` §3). Rather than stop
+    the whole migration over one broken event, it is kept with no end (zero length, or one day if
+    all-day); the original stays in the backup.
+    """
+    end = payload.get("end")
+    if (
+        end is not None
+        and "end_time_zone" not in payload
+        and len(str(end)) == len(str(payload["start"]))
+        and str(end) < str(payload["start"])
+    ):
+        del payload["end"]
+        conv.lose(
+            "end",
+            "it ended before it started, so it was moved without an end "
+            "(the original is in the backup)",
+            LossReason.VALUE_CONVERTED,
+        )
 
 
 def build_vcalendar(

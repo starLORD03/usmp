@@ -37,6 +37,50 @@
       "title": "ConnectorInfo",
       "type": "object"
     },
+    "DataWarning": {
+      "additionalProperties": false,
+      "description": "Something odd in the source data that a person should look at.\n\nThe item is still migrated exactly as it is: a warning is neither a loss nor an error.",
+      "properties": {
+        "usmp_id": {
+          "description": "Stable item identifier, derived from the connector and native id it was first read from.",
+          "pattern": "^usmp:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          "title": "Usmp Id",
+          "type": "string"
+        },
+        "field": {
+          "description": "Top-level payload field the warning is about.",
+          "minLength": 1,
+          "title": "Field",
+          "type": "string"
+        },
+        "detail": {
+          "description": "What looks wrong, in plain words.",
+          "minLength": 1,
+          "title": "Detail",
+          "type": "string"
+        },
+        "hint": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Where to find the item, such as its start time. Never its title or notes.",
+          "title": "Hint"
+        }
+      },
+      "required": [
+        "usmp_id",
+        "field",
+        "detail"
+      ],
+      "title": "DataWarning",
+      "type": "object"
+    },
     "ItemResult": {
       "additionalProperties": false,
       "properties": {
@@ -361,6 +405,14 @@
       ],
       "default": null,
       "description": "The part of the data that was migrated; absent means all."
+    },
+    "warnings": {
+      "description": "Odd things in the source data, such as an event that ends before it starts. Those items were migrated as they are; warnings do not affect `ok`.",
+      "items": {
+        "$ref": "#/$defs/DataWarning"
+      },
+      "title": "Warnings",
+      "type": "array"
     },
     "ok": {
       "description": "True when nothing is mismatched or missing and no errors occurred.",

@@ -11,8 +11,9 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from usmp.core.models import Item, Selection
+from usmp.core.models import DataWarning, Item, Selection
 from usmp.domains import calendar
+from usmp.domains.calendar import checks as calendar_checks
 from usmp.domains.calendar import model as calendar_model
 from usmp.domains.calendar import select as calendar_select
 
@@ -25,6 +26,8 @@ class Domain:
     problems: Callable[[str, Mapping[str, Any]], list[str]]
     select: Callable[[Iterable[Item], Selection], set[str]] | None = None
     """The ``usmp_id`` of the items a selection keeps; ``None`` if the domain cannot select."""
+    warnings: Callable[[Iterable[Item]], list[DataWarning]] | None = None
+    """Odd things in valid data worth showing before a migration (e.g. events ending early)."""
 
 
 KNOWN: dict[tuple[str, int], Domain] = {
@@ -34,6 +37,7 @@ KNOWN: dict[tuple[str, int], Domain] = {
         types=calendar_model.ITEM_TYPES,
         problems=calendar.problems,
         select=calendar_select.select,
+        warnings=calendar_checks.warnings,
     ),
 }
 
@@ -57,3 +61,13 @@ def select(domain: str, items: Iterable[Item], selection: Selection) -> set[str]
     if selector is None:
         raise ValueError(f"USMP cannot choose part of {domain!r} data; migrate all of it")
     return selector(items, selection)
+
+
+def warnings(domain: str, items: Iterable[Item]) -> list[DataWarning]:
+    """Odd things in ``items`` of ``domain`` that a person should look at; none if unknown."""
+    items = list(items)
+    found: list[DataWarning] = []
+    for known in KNOWN.values():
+        if known.name == domain and known.warnings is not None:
+            found += known.warnings(i for i in items if i.schema_version == known.schema_version)
+    return found

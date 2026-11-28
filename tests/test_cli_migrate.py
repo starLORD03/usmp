@@ -327,3 +327,32 @@ def test_bad_selection_is_explained(tmp_path: Path, args: list[str], message: st
     result = runner.invoke(app, ["migrate", "--from", "ics:path=x", "--to", "ics:path=y", *args])
     assert result.exit_code == 2
     assert message in result.output
+
+
+def test_preview_lists_odd_source_data(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from rich.console import Console
+
+    from tests.domains.test_calendar_checks import BACKWARDS, CAL
+    from usmp.connectors.memory import MemoryConnector
+    from usmp.core.engine import migrate
+    from usmp.domains.calendar import event_item
+
+    def long(n: int) -> Item:
+        payload = {"uid": f"l{n}@x", "start": "2026-03-02T09:00:00", "end": "2026-04-02T09:00:00"}
+        return event_item("s", f"l{n}", payload, parent=CAL.usmp_id)
+
+    source = MemoryConnector(
+        {"domain": "calendar"}, items=[CAL, BACKWARDS, *(long(n) for n in range(6))]
+    )
+    target = MemoryConnector({"domain": "calendar"})
+    preview = migrate(source, target, bundle_path=tmp_path / "b.usmp", dry_run=True).preview
+
+    console = Console(record=True, width=120)
+    monkeypatch.setattr(migrate_cli, "console", console)
+    migrate_cli._show_preview(preview)
+    out = console.export_text()
+
+    assert "7 item(s) look wrong in the source" in out
+    assert "starts 2025-02-16T14:45:00 (UTC): ends 2 hours before it starts" in out
+    assert "lasts 31 days: check its end" in out
+    assert "… and 2 more, all listed in the report." in out

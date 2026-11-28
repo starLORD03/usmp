@@ -65,7 +65,10 @@ its own, so they could never be verified.
   same wall-clock time in every zone).
 * Times in UTC use `time_zone: "UTC"`. The aliases `Etc/UTC`, `GMT`, `Etc/GMT`, `Z` and similar are
   normalised to `UTC`.
-* When `end_time_zone` is absent or equal to `time_zone`, `end` MUST be after `start`.
+* When `end_time_zone` is absent or equal to `time_zone`, `end` MUST be after `start`. Readers
+  that meet a provider event ending before it starts (it happens in exports) SHOULD read it
+  without `end` and declare a `value_converted` loss on `end`, instead of failing the whole
+  export; the original stays in the bundle's raw data.
 
 ## 5. Recurrence
 
@@ -135,3 +138,15 @@ How a selection (core spec §8.2) applies to calendar items:
   range, or when any occurrence produced by the master's `recurrence_rules` or
   `recurrence_dates` is. `excluded_dates` are not considered, so a series is never dropped because
   of them. An event whose times cannot be worked out is kept.
+
+## 9. Data warnings
+
+Tools SHOULD warn (core spec §8, step 3), without changing anything, about:
+
+* an event whose `end` in `end_time_zone` falls before its `start` in `time_zone`, for example a
+  flight whose arrival time was entered in the wrong zone;
+* a timed event lasting more than 7 days. Long all-day events (holidays, trips) are normal.
+
+A warning carries the event's `usmp_id`, the field (`end`), a plain description, and a hint for
+finding the event: its start (`starts 2026-03-02T09:00:00 (Europe/Paris)`), never its title,
+notes or attendees.

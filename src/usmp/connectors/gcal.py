@@ -24,6 +24,7 @@ from zoneinfo import ZoneInfo
 
 from usmp.connectors._ical import (
     Converter,
+    drop_backwards_end,
     event_payload,
     local_time,
     notes_with_conferences,
@@ -234,6 +235,7 @@ class _EventConverter:
                 payload["end"] = end
                 if split:
                     payload["end_time_zone"] = end_zone
+            drop_backwards_end(payload, conv)
         for key, name in (("summary", "title"), ("description", "description"),
                           ("location", "location")):  # fmt: skip
             if ev.get(key):
